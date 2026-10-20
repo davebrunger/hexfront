@@ -23,7 +23,8 @@ export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 export interface Overlay {
   selected: Hex | null;
-  moves: Hex[];
+  /** Hexes the unit can move to, and whether it could still attack from there. */
+  moves: { hex: Hex; canAttack: boolean }[];
   targets: { hex: Hex; dice: number; dealt: number; killChance: number }[];
   path: Hex[];
 }
@@ -167,7 +168,7 @@ export class Renderer {
       const { x, y } = toPixel(h, SIZE);
       return el('polygon', { points: this.hexPoints, transform: `translate(${x},${y})`, class: cls }, layer);
     };
-    for (const h of o.moves) poly(h, 'hl-move');
+    for (const m of o.moves) poly(m.hex, m.canAttack ? 'hl-move' : 'hl-move hl-move-only');
     if (o.path.length && o.selected) {
       const pts = [o.selected, ...o.path].map((h) => {
         const p = toPixel(h, SIZE);

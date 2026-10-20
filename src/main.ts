@@ -4,7 +4,7 @@ import { MAX_TURNS, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
 import { Game } from './game';
 import { eq, key } from './hex';
 import { EMPTY_OVERLAY, Renderer, sleep, type Overlay } from './render';
-import type { Hex, Side, Unit, UnitType } from './types';
+import type { Hex, Side, Unit } from './types';
 
 const HUMAN: Side = 'blue';
 const AI_SIDE: Side = 'red';
@@ -51,7 +51,10 @@ function overlayState(path: Hex[] = []): Overlay {
   const targets = game.attackTargets(selected).map((t) => ({ hex: t.pos, ...game.forecast(selected!, t) }));
   return {
     selected: selected.pos,
-    moves: game.moveTargets(selected).map((r) => r.hex),
+    moves: game.moveTargets(selected).map((r) => ({
+      hex: r.hex,
+      canAttack: game.spacesMoved(selected!) + r.cost <= UNIT_SPECS[selected!.type].attackMove,
+    })),
     targets,
     path,
   };
@@ -109,10 +112,7 @@ function renderInspect(): void {
   }
   const t = game.map.terrain(h)!;
   const ti = TERRAIN[t];
-  const costs = (Object.keys(UNIT_SPECS) as UnitType[])
-    .map((u) => `${UNIT_SPECS[u].name.slice(0, 3)} ${Number.isFinite(ti.cost[u]) ? ti.cost[u] : '–'}`)
-    .join(' · ');
-  let html = `<div class="terrain-line"><b>${ti.name}</b>${ti.diceLost ? `<span class="muted"> −${ti.diceLost} attack die against units here</span>` : ''}</div><div class="muted small">Move cost: ${costs}</div>`;
+  let html = `<div class="terrain-line"><b>${ti.name}</b>${ti.diceLost ? `<span class="muted"> −${ti.diceLost} attack die against units here</span>` : ''}</div>${ti.passable ? '' : '<div class="muted small">Impassable</div>'}`;
   const u = game.unitAt(h);
   if (u) {
     const s = UNIT_SPECS[u.type];
@@ -120,7 +120,7 @@ function renderInspect(): void {
     html += `<div class="unit-card ${u.side}">
       <div class="uc-head"><span class="swatch ${u.side}"></span><b>${s.name}</b><span class="muted">${u.side === HUMAN ? 'yours' : 'enemy'} · ${status}</span></div>
       <div class="bar-wrap"><div class="bar-fill ${hpFrac(u) <= 0.35 ? 'low' : hpFrac(u) <= 0.7 ? 'mid' : ''}" style="width:${hpFrac(u) * 100}%"></div></div>
-      <div class="statgrid">${statRow('Strength', `${u.hp}/${s.maxHp}`)}${statRow('Move', s.move)}${statRow('Attack', s.attack.join(' / '))}${statRow('Range', rangeOf(u.type))}</div>
+      <div class="statgrid">${statRow('Strength', `${u.hp}/${s.maxHp}`)}${statRow('Move', s.attackMove === s.move ? s.move : `${s.attackMove} + attack, or ${s.move}`)}${statRow('Attack', s.attack.join(' / '))}${statRow('Range', rangeOf(u.type))}</div>
       <p class="muted small">${s.blurb}</p></div>`;
   }
   box.innerHTML = html;

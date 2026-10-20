@@ -136,6 +136,7 @@ button.primary kbd { border-color: #2a1f0855; background: #2a1f0816; }
 
 .hit-hex { fill: transparent; cursor: pointer; pointer-events: all; }
 .hl-move { fill: rgba(255, 255, 255, 0.34); stroke: #fff; stroke-width: 1.5; stroke-opacity: 0.85; }
+.hl-move-only { fill: rgba(255, 255, 255, 0.1); stroke-dasharray: 4 3; stroke-opacity: 0.6; }
 .hl-selected { fill: none; stroke: #ffd54a; stroke-width: 3.5; }
 .hl-hover { fill: none; stroke: rgba(255, 255, 255, 0.75); stroke-width: 2; }
 .hl-attack { fill: rgba(224, 52, 36, 0.32); stroke: #ff4a36; stroke-width: 3; animation: blink 0.9s ease-in-out infinite; }

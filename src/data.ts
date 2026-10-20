@@ -6,7 +6,10 @@ export interface UnitSpec {
   name: string;
   /** Full strength; a unit at 0 is destroyed. */
   maxHp: number;
+  /** Most spaces the unit can move in a turn. */
   move: number;
+  /** Most spaces the unit can move and still attack that turn. */
+  attackMove: number;
   /** Attack value by distance to the target: index 0 is adjacent. Its length is the unit's range. */
   attack: number[];
   blurb: string;
@@ -16,23 +19,26 @@ export const UNIT_SPECS: Record<UnitType, UnitSpec> = {
   infantry: {
     name: 'Infantry',
     maxHp: 4,
-    move: 3,
+    move: 2,
+    attackMove: 1,
     attack: [3, 2, 1],
-    blurb: 'Sturdy and dependable. Best at holding rough ground.',
+    blurb: 'Moves 1 space and attacks, or 2 spaces without attacking.',
   },
   armour: {
     name: 'Armour',
     maxHp: 3,
-    move: 5,
+    move: 3,
+    attackMove: 3,
     attack: [2, 2, 2],
-    blurb: 'Fast and hard-hitting, but bogs down in forest and hills.',
+    blurb: 'Moves up to 3 spaces and still attacks.',
   },
   artillery: {
     name: 'Artillery',
     maxHp: 2,
-    move: 2,
+    move: 1,
+    attackMove: 0,
     attack: [3, 3, 2, 2, 1, 1],
-    blurb: 'Shells targets up to 6 hexes away. Cannot move and fire in one turn.',
+    blurb: 'Shells targets up to 6 hexes away, ignoring terrain. Moves 1 space or fires, not both.',
   },
 };
 
@@ -66,19 +72,21 @@ export const hpFrac = (u: { type: UnitType; hp: number }) => u.hp / UNIT_SPECS[u
 
 export interface TerrainInfo {
   name: string;
-  /** Attack dice lost when the target stands on this terrain. */
+  /** Attack dice lost when the target stands on this terrain (artillery ignores this). */
   diceLost: number;
-  /** Movement point cost per unit type (Infinity = impassable). */
-  cost: Record<UnitType, number>;
+  passable: boolean;
+  /** Entering this terrain ends the unit's movement for the turn. */
+  stopsMove: boolean;
 }
 
 export const TERRAIN: Record<Terrain, TerrainInfo> = {
-  plain: { name: 'Open ground', diceLost: 0, cost: { infantry: 1, armour: 1, artillery: 1 } },
-  forest: { name: 'Forest', diceLost: 1, cost: { infantry: 2, armour: 3, artillery: 2 } },
-  hills: { name: 'Hills', diceLost: 1, cost: { infantry: 2, armour: 3, artillery: 3 } },
+  plain: { name: 'Open ground', diceLost: 0, passable: true, stopsMove: false },
+  forest: { name: 'Forest', diceLost: 1, passable: true, stopsMove: true },
+  hills: { name: 'Hills', diceLost: 1, passable: true, stopsMove: true },
   water: {
     name: 'Lake',
     diceLost: 0,
-    cost: { infantry: Infinity, armour: Infinity, artillery: Infinity },
+    passable: false,
+    stopsMove: false,
   },
 };

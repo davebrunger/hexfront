@@ -96,6 +96,17 @@ export class Game {
     });
   }
 
+  /** Spaces `u` has moved so far this turn. */
+  spacesMoved(u: Unit): number {
+    return u.spaces;
+  }
+
+  /** Entering `h` ends movement: forest, hills, or next to an enemy. */
+  stopsMovement(side: Side, h: Hex): boolean {
+    const t = this.map.terrain(h);
+    return (t !== undefined && TERRAIN[t].stopsMove) || this.inEnemyZoc(side, h);
+  }
+
   canMove(u: Unit): boolean {
     return !u.attacked && u.mp > 0 && u.side === this.current;
   }
@@ -111,16 +122,15 @@ export class Game {
       frontier.sort((a, b) => a.cost - b.cost);
       const cur = frontier.shift()!;
       if (cur.cost > result.get(key(cur.hex))!.cost) continue;
-      // Entering an enemy zone of control ends movement (leaving one is free).
-      if (!eq(cur.hex, u.pos) && this.inEnemyZoc(u.side, cur.hex)) continue;
+      // Entering forest, hills or an enemy zone of control ends movement (leaving is free).
+      if (!eq(cur.hex, u.pos) && this.stopsMovement(u.side, cur.hex)) continue;
       for (const n of neighbors(cur.hex)) {
         const t = this.map.terrain(n);
         if (!t) continue;
-        const step = TERRAIN[t].cost[u.type];
-        if (!Number.isFinite(step)) continue;
+        if (!TERRAIN[t].passable) continue;
         const occupant = this.unitAt(n);
         if (occupant && occupant.side !== u.side) continue;
-        const cost = cur.cost + step;
+        const cost = cur.cost + 1;
         if (cost > u.mp) continue;
         const known = result.get(key(n));
         if (known && known.cost <= cost) continue;
@@ -146,10 +156,10 @@ export class Game {
     return path;
   }
 
-  /** Enemy units `u` could shoot at if it stood on `from`. */
-  targetsFrom(u: Unit, from: Hex, hasMoved: boolean): Unit[] {
+  /** Enemy units `u` could shoot at if it stood on `from` having moved `spaces` this turn. */
+  targetsFrom(u: Unit, from: Hex, spaces: number): Unit[] {
     if (u.attacked || u.side !== this.current) return [];
-    if (u.type === 'artillery' && hasMoved) return [];
+    if (spaces > UNIT_SPECS[u.type].attackMove) return [];
     const range = rangeOf(u.type);
     return this.units.filter(
       (e) => e.side !== u.side && distance(from, e.pos) <= range && this.diceFor(u, from, e) > 0,
@@ -157,7 +167,7 @@ export class Game {
   }
 
   attackTargets(u: Unit): Unit[] {
-    return this.targetsFrom(u, u.pos, u.moved);
+    return this.targetsFrom(u, u.pos, this.spacesMoved(u));
   }
 
   // ----------------------------------------------------------------- combat
@@ -165,7 +175,8 @@ export class Game {
   /** Number of attack dice `a` rolls from `aHex` against `d`. */
   diceFor(a: Unit, aHex: Hex, d: Unit): number {
     const terrain = this.map.terrain(d.pos) ?? 'plain';
-    return Math.max(0, attackAt(a.type, distance(aHex, d.pos)) - TERRAIN[terrain].diceLost);
+    const lost = a.type === 'artillery' ? 0 : TERRAIN[terrain].diceLost;
+    return Math.max(0, attackAt(a.type, distance(aHex, d.pos)) - lost);
   }
 
   /** Expected outcome of `att` attacking `def` from `attHex`. */
@@ -210,18 +221,13 @@ export class Game {
     if (!r || eq(dest, u.pos) || this.unitAt(dest)) throw new Error('Illegal move');
     const path = this.pathTo(reach, dest);
     u.pos = dest;
-    u.mp -= r.cost;
-    u.moved = true;
+    u.mp = this.stopsMovement(u.side, dest) ? 0 : u.mp - r.cost;
+    u.spaces += r.cost;
     return path;
   }
 
   endTurn(): void {
     if (this.winner) return;
-    // Units that sat still recover a little.
-    for (const u of this.unitsOf(this.current)) {
-      if (u.moved || u.attacked) continue;
-      u.hp = Math.min(UNIT_SPECS[u.type].maxHp, u.hp + 1);
-    }
     if (this.current === 'red' && this.turn >= MAX_TURNS) {
       this.decideByScore();
       return;
@@ -234,14 +240,14 @@ export class Game {
   // ---------------------------------------------------------------- internals
 
   private spawn(side: Side, type: UnitType, pos: Hex): void {
-    this.units.push({ id: this.nextId++, type, side, pos, hp: UNIT_SPECS[type].maxHp, mp: 0, attacked: false, moved: false, done: false });
+    this.units.push({ id: this.nextId++, type, side, pos, hp: UNIT_SPECS[type].maxHp, mp: 0, spaces: 0, attacked: false, done: false });
   }
 
   private startTurn(): void {
     for (const u of this.unitsOf(this.current)) {
       u.mp = UNIT_SPECS[u.type].move;
+      u.spaces = 0;
       u.attacked = false;
-      u.moved = false;
       u.done = false;
     }
   }

@@ -15,10 +15,11 @@ export interface Unit {
   pos: Hex;
   /** Strength, 1..UNIT_SPECS[type].maxHp. A unit at 0 is destroyed. */
   hp: number;
-  /** Movement points left this turn. */
+  /** Spaces of movement left this turn. */
   mp: number;
+  /** Spaces moved so far this turn. */
+  spaces: number;
   attacked: boolean;
-  moved: boolean;
   /** Bookkeeping flag for the AI planner: unit has already been handled this turn. */
   done: boolean;
 }

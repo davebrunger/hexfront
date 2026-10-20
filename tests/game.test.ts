@@ -78,6 +78,21 @@ describe('movement', () => {
       assert.equal(g.unitAt(r.hex), undefined);
     }
   });
+  it('entering forest or hills ends movement for the turn', () => {
+    const g = new Game(7);
+    const arm = g.unitsOf('blue').find((u) => u.type === 'armour')!;
+    g.units = g.units.filter((u) => u === arm);
+    const line = [1, 2, 3].map((i) => ({ q: arm.pos.q + i, r: arm.pos.r }));
+    for (const h of line) g.map.tiles.set(key(h), 'plain');
+    g.map.tiles.set(key(line[0]), 'forest');
+    const reach = g.reachable(arm);
+    assert.ok(reach.has(key(line[0])));
+    assert.equal(reach.get(key(line[1]))?.prev === key(line[0]), false, 'cannot continue through forest');
+    g.moveUnit(arm, line[0]);
+    assert.equal(arm.mp, 0);
+    assert.equal(g.spacesMoved(arm), 1);
+    assert.equal(g.canMove(arm), false);
+  });
   it('enemy zone of control stops movement', () => {
     const g = new Game(7);
     const mover = g.unitsOf('blue').find((u) => u.type === 'armour')!;
@@ -131,18 +146,44 @@ describe('combat', () => {
     const near = g.forecast(art, inf);
     assert.equal(near.dice, 3);
     assert.equal(near.dealt, 1.5);
+    assert.equal(g.forecast(art, { ...inf, pos: { q: art.pos.q + 5, r: art.pos.r } }).dice, 1);
+    // Terrain costs non-artillery attackers a die.
+    const mine = g.unitsOf('blue').find((u) => u.type === 'infantry')!;
+    inf.pos = { q: mine.pos.q + 1, r: mine.pos.r };
     g.map.tiles.set(key(inf.pos), 'hills');
-    assert.equal(g.forecast(art, inf).dice, 2);
-    inf.pos = { q: art.pos.q + 5, r: art.pos.r };
+    assert.equal(g.forecast(mine, inf).dice, 2);
+    inf.pos = { q: mine.pos.q + 3, r: mine.pos.r };
     g.map.tiles.set(key(inf.pos), 'forest');
-    assert.equal(g.forecast(art, inf).dice, 0);
-    assert.ok(!g.attackTargets(art).includes(inf), 'cannot attack with no dice');
+    assert.equal(g.forecast(mine, inf).dice, 0);
+    assert.ok(!g.attackTargets(mine).includes(inf), 'cannot attack with no dice');
   });
-  it('artillery cannot fire after moving', () => {
+  it('limits how far each unit can move and still attack', () => {
+    const g = new Game(3);
+    const pick = (type: string) => g.unitsOf('blue').find((u) => u.type === type)!;
+    const enemy = g.unitsOf('red')[0];
+    const near = (u: { pos: { q: number; r: number } }) => {
+      enemy.pos = { q: u.pos.q + 1, r: u.pos.r };
+      g.map.tiles.set(key(enemy.pos), 'plain');
+    };
+    const inf = pick('infantry');
+    near(inf);
+    assert.equal(g.targetsFrom(inf, inf.pos, 1).length > 0, true);
+    assert.deepEqual(g.targetsFrom(inf, inf.pos, 2), []);
+    const arm = pick('armour');
+    near(arm);
+    assert.equal(g.targetsFrom(arm, arm.pos, 3).length > 0, true);
+    const art = pick('artillery');
+    near(art);
+    assert.equal(g.targetsFrom(art, art.pos, 0).length > 0, true);
+    assert.deepEqual(g.targetsFrom(art, art.pos, 1), []);
+  });
+  it('artillery ignores terrain dice penalties', () => {
     const g = new Game(3);
     const art = g.unitsOf('blue').find((u) => u.type === 'artillery')!;
-    art.moved = true;
-    assert.deepEqual(g.attackTargets(art), []);
+    const inf = g.unitsOf('red').find((u) => u.type === 'infantry')!;
+    inf.pos = { q: art.pos.q + 1, r: art.pos.r };
+    g.map.tiles.set(key(inf.pos), 'hills');
+    assert.equal(g.forecast(art, inf).dice, 3);
   });
   it('forecasts the chance to destroy a target', () => {
     const g = new Game(3);
@@ -159,12 +200,13 @@ describe('combat', () => {
 });
 
 describe('turns and victory', () => {
-  it('units that stay still heal at the end of the turn', () => {
+  it('damaged units do not heal', () => {
     const g = new Game(11);
     const u = g.unitsOf('blue')[0];
     u.hp = 1;
     g.endTurn();
-    assert.equal(u.hp, 2);
+    g.endTurn();
+    assert.equal(u.hp, 1);
   });
   it('destroying the last enemy unit wins immediately', () => {
     const g = new Game(11);
