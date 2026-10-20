@@ -8,7 +8,7 @@ Command the Allied or Axis side against a computer opponent, on a randomly gener
 ```bash
 npm install
 npm run dev        # dev server with hot reload
-npm run build      # type-check + production build into dist/
+npm run build      # type-check + build a single self-contained dist/index.html
 npm run preview    # serve the production build
 npm test           # unit tests + AI-vs-AI simulations
 ```
