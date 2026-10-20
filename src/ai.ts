@@ -38,7 +38,7 @@ export function planAction(game: Game): AIPlan | null {
     let targetVal = -Infinity;
     for (const t of game.targetsFrom(unit, hex, moved || unit.moved)) {
       const f = game.forecast(unit, t, hex);
-      const v = f.dealt + (f.kills ? 3 : 0);
+      const v = f.dealt + f.killChance * 3;
       if (v > targetVal) {
         targetVal = v;
         target = t;
@@ -48,7 +48,7 @@ export function planAction(game: Game): AIPlan | null {
     else target = null;
 
     const terrain = game.map.terrain(hex)!;
-    score += (TERRAIN[terrain].defence - 1) * 3;
+    score += TERRAIN[terrain].diceLost * 1.25;
 
     // Closing with / keeping away from the enemy.
     const dEnemy = enemies.length ? Math.min(...enemies.map((e) => distance(hex, e.pos))) : 0;

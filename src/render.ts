@@ -24,7 +24,7 @@ export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 export interface Overlay {
   selected: Hex | null;
   moves: Hex[];
-  targets: { hex: Hex; dealt: number; kills: boolean }[];
+  targets: { hex: Hex; dice: number; dealt: number; killChance: number }[];
   path: Hex[];
 }
 
@@ -180,7 +180,8 @@ export class Renderer {
       poly(t.hex, 'hl-attack');
       const { x, y } = toPixel(t.hex, SIZE);
       const g = el('g', { transform: `translate(${x},${y - 26})`, class: 'forecast' }, layer);
-      const label = t.kills ? `−${t.dealt} ☠` : `−${t.dealt}`;
+      const kill = t.killChance >= 0.01 ? ` · ${Math.round(t.killChance * 100)}% ☠` : '';
+      const label = `${t.dice}🎲 −${t.dealt.toFixed(1)}${kill}`;
       const w = label.length * 6 + 10;
       el('rect', { x: -w / 2, y: -8, width: w, height: 15, rx: 4 }, g);
       const txt = el('text', { x: 0, y: 3 }, g);
@@ -315,7 +316,7 @@ export class Renderer {
       await this.lunge(a, ap, dp);
     }
     d?.body.classList.add('hit');
-    this.float(dp, `−${res.dmgToDefender}`, 'dmg');
+    this.float(dp, res.dmgToDefender ? `−${res.dmgToDefender}` : 'miss', 'dmg');
     this.syncUnits();
     await sleep(380);
     d?.body.classList.remove('hit');

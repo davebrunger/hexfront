@@ -112,7 +112,7 @@ function renderInspect(): void {
   const costs = (Object.keys(UNIT_SPECS) as UnitType[])
     .map((u) => `${UNIT_SPECS[u].name.slice(0, 3)} ${Number.isFinite(ti.cost[u]) ? ti.cost[u] : '–'}`)
     .join(' · ');
-  let html = `<div class="terrain-line"><b>${ti.name}</b><span class="muted"> defence ×${ti.defence.toFixed(2)}</span></div><div class="muted small">Move cost: ${costs}</div>`;
+  let html = `<div class="terrain-line"><b>${ti.name}</b>${ti.diceLost ? `<span class="muted"> −${ti.diceLost} attack die against units here</span>` : ''}</div><div class="muted small">Move cost: ${costs}</div>`;
   const u = game.unitAt(h);
   if (u) {
     const s = UNIT_SPECS[u.type];

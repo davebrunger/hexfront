@@ -19,8 +19,8 @@ Add `?seed=1234` to the URL to replay a specific map.
 
 - Win by **wiping out the enemy**, or by having more strength left at the end of turn 30.
 - Each unit may **move, then attack once**. Attacking ends its move. Artillery cannot move *and* fire.
-- **Attack falls off with range**, and there is no return fire.
-- **Terrain** changes movement cost and reduces damage taken (hills and forest protect best; lakes are impassable).
+- **Attacking** rolls one die per point of attack, which falls off with range. Dice faces are Infantry, Infantry, Armour, Grenade, Flag, Star; each grenade or face matching the target's type does 1 damage. There is no return fire.
+- **Terrain** changes movement cost (lakes are impassable). Attacks on units in forest or on hills roll one die fewer.
 - **Zones of control:** entering a hex next to an enemy ends your move.
 - Units that stay still heal.
 

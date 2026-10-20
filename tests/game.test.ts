@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { planAction } from '../src/ai';
-import { MAX_TURNS, attackAt, rangeOf } from '../src/data';
+import { DIE_FACES, MAX_TURNS, attackAt, dieHits, rangeOf } from '../src/data';
 import { Game } from '../src/game';
 import { distance, eq, key, neighbors } from '../src/hex';
 import { MAP_HEIGHT, MAP_WIDTH } from '../src/map';
@@ -99,7 +99,7 @@ describe('movement', () => {
 });
 
 describe('combat', () => {
-  it('damages the defender without return fire', () => {
+  it('damage equals the dice that hit, with no return fire', () => {
     const g = new Game(3);
     const art = g.unitsOf('blue').find((u) => u.type === 'artillery')!;
     const inf = g.unitsOf('red').find((u) => u.type === 'infantry')!;
@@ -108,12 +108,19 @@ describe('combat', () => {
     const before = inf.hp;
     const artHp = art.hp;
     const res = g.attack(art, inf);
-    assert.ok(res.dmgToDefender >= 1);
+    assert.equal(res.rolls.length, 3);
+    const hits = res.rolls.filter((f) => f === 'grenade' || f === 'infantry').length;
+    assert.equal(res.dmgToDefender, Math.min(hits, before));
     assert.equal(inf.hp, before - res.dmgToDefender);
     assert.equal(art.hp, artHp);
     assert.equal(art.attacked, true);
   });
-  it('attack value falls off with distance', () => {
+  it('dice hit on a grenade or the target type', () => {
+    assert.deepEqual(DIE_FACES.filter((f) => dieHits(f, 'infantry')), ['infantry', 'infantry', 'grenade']);
+    assert.deepEqual(DIE_FACES.filter((f) => dieHits(f, 'armour')), ['armour', 'grenade']);
+    assert.deepEqual(DIE_FACES.filter((f) => dieHits(f, 'artillery')), ['grenade']);
+  });
+  it('dice fall off with distance and terrain', () => {
     assert.deepEqual([1, 2, 3, 4].map((d) => attackAt('infantry', d)), [3, 2, 1, 0]);
     assert.equal(rangeOf('artillery'), 6);
     const g = new Game(3);
@@ -122,11 +129,14 @@ describe('combat', () => {
     inf.pos = { q: art.pos.q + 1, r: art.pos.r };
     g.map.tiles.set(key(inf.pos), 'plain');
     const near = g.forecast(art, inf);
+    assert.equal(near.dice, 3);
+    assert.equal(near.dealt, 1.5);
+    g.map.tiles.set(key(inf.pos), 'hills');
+    assert.equal(g.forecast(art, inf).dice, 2);
     inf.pos = { q: art.pos.q + 5, r: art.pos.r };
-    g.map.tiles.set(key(inf.pos), 'plain');
-    const far = g.forecast(art, inf);
-    assert.equal(near.dealt, 3);
-    assert.equal(far.dealt, 1);
+    g.map.tiles.set(key(inf.pos), 'forest');
+    assert.equal(g.forecast(art, inf).dice, 0);
+    assert.ok(!g.attackTargets(art).includes(inf), 'cannot attack with no dice');
   });
   it('artillery cannot fire after moving', () => {
     const g = new Game(3);
@@ -134,12 +144,17 @@ describe('combat', () => {
     art.moved = true;
     assert.deepEqual(g.attackTargets(art), []);
   });
-  it('forecast matches a neutral roll closely', () => {
+  it('forecasts the chance to destroy a target', () => {
     const g = new Game(3);
     const a = g.unitsOf('blue').find((u) => u.type === 'armour')!;
     const d = g.unitsOf('red').find((u) => u.type === 'infantry')!;
-    const f = g.forecast(a, d, a.pos);
-    assert.ok(f.dealt >= 1 && f.dealt <= 10);
+    d.pos = { q: a.pos.q + 1, r: a.pos.r };
+    g.map.tiles.set(key(d.pos), 'plain');
+    d.hp = 2;
+    // 2 dice, each hitting infantry half the time: both must hit.
+    assert.equal(g.forecast(a, d).killChance, 0.25);
+    d.hp = 3;
+    assert.equal(g.forecast(a, d).killChance, 0);
   });
 });
 
@@ -159,7 +174,11 @@ describe('turns and victory', () => {
     last.pos = { q: art.pos.q + 2, r: art.pos.r };
     g.map.tiles.set(key(last.pos), 'plain');
     last.hp = 1;
-    g.attack(art, last);
+    // Dice can miss, so keep firing until the target falls.
+    for (let i = 0; i < 100 && !g.winner; i++) {
+      art.attacked = false;
+      g.attack(art, last);
+    }
     assert.equal(g.winner, 'blue');
   });
 });

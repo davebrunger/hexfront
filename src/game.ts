@@ -1,4 +1,4 @@
-import { MAX_TURNS, TERRAIN, UNIT_SPECS, attackAt, rangeOf } from './data';
+import { DIE_FACES, DIE_LABELS, MAX_TURNS, TERRAIN, UNIT_SPECS, attackAt, dieHits, hitChance, rangeOf, type DieFace } from './data';
 import { distance, eq, fromOffset, key, neighbors } from './hex';
 import { generateMap, mulberry32, type GameMap } from './map';
 import type { Hex, LogEntry, Side, Unit, UnitType } from './types';
@@ -10,13 +10,17 @@ export interface Reach {
 }
 
 export interface Forecast {
+  dice: number;
+  /** Expected damage. */
   dealt: number;
-  kills: boolean;
+  /** Chance the attack destroys the target. */
+  killChance: number;
 }
 
 export interface CombatResult {
   attacker: Unit;
   defender: Unit;
+  rolls: DieFace[];
   dmgToDefender: number;
   defenderDied: boolean;
   ranged: boolean;
@@ -36,7 +40,16 @@ const START_UNITS: [UnitType, number, number][] = [
   ['artillery', 1, 6],
 ];
 
-const strengthFactor = (u: Unit, hp: number) => 0.4 + (0.6 * hp) / UNIT_SPECS[u.type].maxHp;
+/** Chance of at least `k` hits from `n` dice that each hit with chance `p`. */
+function atLeast(k: number, n: number, p: number): number {
+  let total = 0;
+  let choose = 1;
+  for (let i = 0; i <= n; i++) {
+    if (i >= k) total += choose * p ** i * (1 - p) ** (n - i);
+    choose = (choose * (n - i)) / (i + 1);
+  }
+  return total;
+}
 
 export class Game {
   readonly map: GameMap;
@@ -138,7 +151,9 @@ export class Game {
     if (u.attacked || u.side !== this.current) return [];
     if (u.type === 'artillery' && hasMoved) return [];
     const range = rangeOf(u.type);
-    return this.units.filter((e) => e.side !== u.side && distance(from, e.pos) <= range);
+    return this.units.filter(
+      (e) => e.side !== u.side && distance(from, e.pos) <= range && this.diceFor(u, from, e) > 0,
+    );
   }
 
   attackTargets(u: Unit): Unit[] {
@@ -147,35 +162,38 @@ export class Game {
 
   // ----------------------------------------------------------------- combat
 
-  private calc(a: Unit, aHex: Hex, d: Unit, roll: number): number {
-    const atk = attackAt(a.type, distance(aHex, d.pos)) * strengthFactor(a, a.hp);
+  /** Number of attack dice `a` rolls from `aHex` against `d`. */
+  diceFor(a: Unit, aHex: Hex, d: Unit): number {
     const terrain = this.map.terrain(d.pos) ?? 'plain';
-    const dmg = Math.round((atk / TERRAIN[terrain].defence) * roll);
-    return Math.max(1, Math.min(dmg, d.hp));
+    return Math.max(0, attackAt(a.type, distance(aHex, d.pos)) - TERRAIN[terrain].diceLost);
   }
 
-  /** Expected outcome (roll = 1) of `att` attacking `def` from `attHex`. */
+  /** Expected outcome of `att` attacking `def` from `attHex`. */
   forecast(att: Unit, def: Unit, attHex: Hex = att.pos): Forecast {
-    const dealt = this.calc(att, attHex, def, 1);
-    return { dealt, kills: dealt >= def.hp };
+    const dice = this.diceFor(att, attHex, def);
+    const p = hitChance(def.type);
+    return { dice, dealt: Math.min(dice * p, def.hp), killChance: atLeast(def.hp, dice, p) };
   }
 
   attack(att: Unit, def: Unit): CombatResult {
     if (!this.attackTargets(att).includes(def)) throw new Error('Illegal attack');
-    const dealt = this.calc(att, att.pos, def, 0.75 + this.rng() * 0.5);
+    const rolls = Array.from({ length: this.diceFor(att, att.pos, def) }, () => DIE_FACES[Math.floor(this.rng() * DIE_FACES.length)]);
+    const dealt = Math.min(rolls.filter((f) => dieHits(f, def.type)).length, def.hp);
     def.hp -= dealt;
     att.attacked = true;
     att.mp = 0;
     const result: CombatResult = {
       attacker: att,
       defender: def,
+      rolls,
       dmgToDefender: dealt,
       defenderDied: def.hp <= 0,
       ranged: distance(att.pos, def.pos) > 1,
     };
     const an = UNIT_SPECS[att.type].name;
     const dn = UNIT_SPECS[def.type].name;
-    let text = `${an} hits ${dn} for ${dealt}`;
+    const rolled = rolls.map((f) => DIE_LABELS[f]).join(', ');
+    let text = `${an} attacks ${dn}, rolls ${rolled}: ${dealt ? `${dealt} hit${dealt > 1 ? 's' : ''}` : 'miss'}`;
     if (result.defenderDied) text += ` — ${dn} destroyed!`;
     this.addLog(att.side, text);
     this.units = this.units.filter((u) => u.hp > 0);
