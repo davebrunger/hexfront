@@ -142,6 +142,7 @@ export class Game {
         const t = this.map.terrain(n);
         if (!t) continue;
         if (!TERRAIN[t].passable) continue;
+        if (TERRAIN[t].landEntryOnly && !TERRAIN[this.map.terrain(cur.hex)!].land) continue;
         const occupant = this.unitAt(n);
         if (occupant && occupant.side !== u.side) continue;
         const cost = cur.cost + 1;
@@ -174,6 +175,7 @@ export class Game {
   targetsFrom(u: Unit, from: Hex, spaces: number): Unit[] {
     if (u.attacked || u.side !== this.current) return [];
     if (spaces > UNIT_SPECS[u.type].attackMove) return [];
+    if (spaces > 0 && TERRAIN[this.map.terrain(from)!].noAttackAfterEntering) return [];
     const range = rangeOf(u.type);
     return this.units.filter(
       (e) =>
@@ -187,25 +189,33 @@ export class Game {
   /**
    * Whether a unit on `from` can see `to`. Units, sight-blocking terrain and anything off the board
    * (such as the half hexes at the ends of the short rows) between the two hexes block it; the two
-   * hexes themselves never do. `ignore` is left out as an obstruction (a unit considering a move).
+   * hexes themselves never do. Between two hexes of high ground only units on high ground block it.
+   * `ignore` is left out as an obstruction (a unit considering a move).
    * A line running along hex edges is only blocked if there are obstructions on both sides of it,
    * so the line is checked nudged slightly to each side and blocked only if both are.
    */
   lineOfSight(from: Hex, to: Hex, ignore?: Unit): boolean {
-    const ends = [this.map.terrain(from), this.map.terrain(to)];
+    const high = (h: Hex) => {
+      const t = this.map.terrain(h);
+      return t !== undefined && TERRAIN[t].high;
+    };
+    const overHigh = high(from) && high(to);
     const clear = (offset: number) => {
-      const counts = new Map<string, number>();
+      const contiguous: Hex[] = [];
       for (const h of hexesOnLine(from, to, offset)) {
         if (eq(h, from) || eq(h, to)) continue;
         const unit = this.unitAt(h);
-        if (unit && unit !== ignore) return false;
+        const blockingUnit = unit !== undefined && unit !== ignore;
+        if (overHigh) {
+          if (blockingUnit && high(h)) return false;
+          continue;
+        }
         const t = this.map.terrain(h);
-        if (!t) return false;
-        const info = TERRAIN[t];
-        if (!info.blocksSight || (info.seeAcrossFromSame && ends[0] === t && ends[1] === t)) continue;
-        const n = (counts.get(t) ?? 0) + 1;
-        if (n >= info.blocksSight) return false;
-        counts.set(t, n);
+        if (blockingUnit || !t || TERRAIN[t].sight === 'blocks') return false;
+        if (TERRAIN[t].sight === 'contiguous') {
+          if (contiguous.some((c) => this.map.terrain(c) === t && distance(c, h) === 1)) return false;
+          contiguous.push(h);
+        }
       }
       return true;
     };
@@ -220,9 +230,23 @@ export class Game {
 
   /** Number of attack dice `a` rolls from `aHex` against `d`. */
   diceFor(a: Unit, aHex: Hex, d: Unit): number {
-    const terrain = this.map.terrain(d.pos) ?? 'plain';
-    const lost = a.type === 'artillery' ? 0 : TERRAIN[terrain].diceLost;
-    return Math.max(0, attackAt(a.type, distance(aHex, d.pos)) - lost);
+    return this.diceAt(a.type, aHex, d.pos);
+  }
+
+  /**
+   * Attack dice a unit of `type` rolls from `from` at a target on `to`: its attack at that range,
+   * less the target terrain's protection and the attacker terrain's penalty, which add together.
+   */
+  diceAt(type: UnitType, from: Hex, to: Hex): number {
+    return Math.max(0, attackAt(type, distance(from, to)) - this.diceLost(type, from, to));
+  }
+
+  /** Attack dice a unit of `type` on `from` loses to terrain when attacking a target on `to`. */
+  diceLost(type: UnitType, from: Hex, to: Hex): number {
+    const att = TERRAIN[this.map.terrain(from) ?? 'plain'];
+    const def = TERRAIN[this.map.terrain(to) ?? 'plain'];
+    const protection = def.high && att.high ? 0 : def.protection[type];
+    return protection + att.attackPenalty[type];
   }
 
   /** Expected outcome of `att` attacking `def` from `attHex`. */

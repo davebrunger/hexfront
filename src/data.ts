@@ -74,25 +74,52 @@ export const hpFrac = (u: { type: UnitType; hp: number }) => u.hp / UNIT_SPECS[u
 
 export interface TerrainInfo {
   name: string;
-  /** Attack dice lost when the target stands on this terrain (artillery ignores this). */
-  diceLost: number;
   passable: boolean;
+  /** Dry land, as opposed to lake and river (bridges included). */
+  land: boolean;
+  /** Can only be entered from a land hex. */
+  landEntryOnly: boolean;
   /** Entering this terrain ends the unit's movement for the turn. */
   stopsMove: boolean;
-  /** Hexes of this terrain a line of sight must cross to be blocked (0: never blocks sight). */
-  blocksSight: number;
-  /** Doesn't block sight between an attacker and target that both stand on this terrain. */
-  seeAcrossFromSame: boolean;
+  /** A unit can't attack on a turn it moved onto this terrain. */
+  noAttackAfterEntering: boolean;
+  /** Attack dice each attacking unit type loses when its target stands here. */
+  protection: Record<UnitType, number>;
+  /** Attack dice each unit type loses when attacking from here. */
+  attackPenalty: Record<UnitType, number>;
+  /**
+   * High ground: `protection` only applies against attackers that aren't on high ground, and
+   * units on high ground see each other over anything except units on high ground.
+   */
+  high: boolean;
+  /** 'blocks': any hex blocks line of sight; 'contiguous': two adjacent hexes on the line do. */
+  sight: 'clear' | 'blocks' | 'contiguous';
 }
 
+const dice = (infantry: number, armour: number, artillery: number) => ({ infantry, armour, artillery });
+const NONE = dice(0, 0, 0);
+const OPEN = {
+  passable: true,
+  land: true,
+  landEntryOnly: false,
+  stopsMove: false,
+  noAttackAfterEntering: false,
+  protection: NONE,
+  attackPenalty: NONE,
+  high: false,
+  sight: 'clear',
+} as const;
+const COVER = { ...OPEN, stopsMove: true, noAttackAfterEntering: true, protection: dice(1, 2, 0), sight: 'blocks' } as const;
+const WATER = { ...OPEN, passable: false, land: false } as const;
+
 export const TERRAIN: Record<Terrain, TerrainInfo> = {
-  plain: { name: 'Open ground', diceLost: 0, passable: true, stopsMove: false, blocksSight: 0, seeAcrossFromSame: false },
-  forest: { name: 'Forest', diceLost: 1, passable: true, stopsMove: true, blocksSight: 1, seeAcrossFromSame: false },
-  village: { name: 'Village', diceLost: 1, passable: true, stopsMove: true, blocksSight: 1, seeAcrossFromSame: false },
-  hills: { name: 'Hills', diceLost: 1, passable: true, stopsMove: true, blocksSight: 1, seeAcrossFromSame: true },
-  water: { name: 'Lake', diceLost: 0, passable: false, stopsMove: false, blocksSight: 2, seeAcrossFromSame: false },
-  river: { name: 'River', diceLost: 0, passable: false, stopsMove: false, blocksSight: 0, seeAcrossFromSame: false },
-  bridge: { name: 'Bridge', diceLost: 0, passable: true, stopsMove: false, blocksSight: 0, seeAcrossFromSame: false },
+  plain: { ...OPEN, name: 'Open ground' },
+  forest: { ...COVER, name: 'Forest' },
+  village: { ...COVER, name: 'Village', attackPenalty: dice(0, 2, 0) },
+  hills: { ...OPEN, name: 'Hills', protection: dice(1, 1, 0), high: true, sight: 'blocks' },
+  water: { ...WATER, name: 'Lake', sight: 'contiguous' },
+  river: { ...WATER, name: 'River' },
+  bridge: { ...OPEN, name: 'Bridge', land: false, landEntryOnly: true },
 };
 
 /** River hexes, with or without a bridge; drawn as one continuous river. */

@@ -5,7 +5,7 @@ import { Game, other } from './game';
 import { PRESET_MAPS } from './map';
 import { eq, key } from './hex';
 import { EMPTY_OVERLAY, Renderer, sleep, type Overlay } from './render';
-import type { Hex, Side, Unit } from './types';
+import type { Hex, Side, Terrain, Unit, UnitType } from './types';
 
 /** The side the player commands; the AI plays the other. */
 let human: Side = 'allied';
@@ -118,6 +118,22 @@ function renderPanel(): void {
   renderLog();
 }
 
+/** One-line summaries of a terrain type's rules for the inspect panel. */
+function terrainNotes(t: Terrain): string[] {
+  const ti = TERRAIN[t];
+  if (!ti.passable) return [ti.sight === 'contiguous' ? 'Impassable; two adjacent hexes block sight' : 'Impassable'];
+  const dice = (d: Record<UnitType, number>) =>
+    (Object.keys(d) as UnitType[]).filter((u) => d[u]).map((u) => `${UNIT_SPECS[u].name} −${d[u]}`).join(', ');
+  const notes: string[] = [];
+  if (ti.stopsMove) notes.push('Stops movement');
+  if (ti.noAttackAfterEntering) notes.push('No attack after moving in');
+  if (ti.landEntryOnly) notes.push('Enter from land only');
+  if (dice(ti.protection)) notes.push(`Attacks on it: ${dice(ti.protection)}${ti.high ? ' (unless from a hill)' : ''}`);
+  if (dice(ti.attackPenalty)) notes.push(`Attacks from it: ${dice(ti.attackPenalty)}`);
+  if (ti.sight === 'blocks') notes.push(ti.high ? 'Blocks sight, except hill to hill' : 'Blocks sight');
+  return notes.length ? notes : ['No effect'];
+}
+
 function statRow(label: string, value: string | number): string {
   return `<div><span class="k">${label}</span><b>${value}</b></div>`;
 }
@@ -131,7 +147,7 @@ function renderInspect(): void {
   }
   const t = game.map.terrain(h)!;
   const ti = TERRAIN[t];
-  let html = `<div class="terrain-line"><b>${ti.name}</b>${ti.diceLost ? `<span class="muted"> −${ti.diceLost} attack die against units here</span>` : ''}</div>${ti.passable ? '' : '<div class="muted small">Impassable</div>'}`;
+  let html = `<div class="terrain-line"><b>${ti.name}</b></div><div class="muted small">${terrainNotes(t).join(' · ')}</div>`;
   const u = game.unitAt(h);
   if (u) {
     const s = UNIT_SPECS[u.type];

@@ -154,9 +154,29 @@ describe('movement', () => {
     assert.equal(g.spacesMoved(arm), 1);
     assert.equal(g.canMove(arm), false);
   });
-  it('villages play like forest', () => {
-    assert.deepEqual({ ...TERRAIN.village, name: '' }, { ...TERRAIN.forest, name: '' });
+  it('hills do not stop movement', () => {
+    const g = new Game(7);
+    const arm = g.unitsOf('allied').find((u) => u.type === 'armour')!;
+    g.units = [arm];
+    const line = [1, 2, 3].map((i) => ({ q: arm.pos.q + i, r: arm.pos.r }));
+    for (const h of line) g.map.tiles.set(key(h), 'plain');
+    g.map.tiles.set(key(line[0]), 'hills');
+    assert.equal(g.reachable(arm).get(key(line[1]))?.prev, key(line[0]));
     assert.equal(MAP_LETTERS.v, 'village');
+  });
+  it('bridges can only be entered from land', () => {
+    const g = new Game(7);
+    const inf = g.unitsOf('allied').find((u) => u.type === 'infantry')!;
+    g.units = [inf];
+    for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
+    const a = fromOffset(4, 4);
+    const b = fromOffset(5, 4);
+    g.map.tiles.set(key(a), 'bridge');
+    g.map.tiles.set(key(b), 'bridge');
+    inf.pos = a;
+    const reach = g.reachable(inf);
+    assert.ok(reach.has(key(b)), 'reachable round by land');
+    assert.notEqual(reach.get(key(b))!.prev, key(a), 'not straight from the neighbouring bridge');
   });
   it('enemy zone of control stops movement', () => {
     const g = new Game(7);
@@ -229,6 +249,7 @@ describe('combat', () => {
     const near = (u: { pos: { q: number; r: number } }) => {
       enemy.pos = { q: u.pos.q + 1, r: u.pos.r };
       g.map.tiles.set(key(enemy.pos), 'plain');
+      g.map.tiles.set(key(u.pos), 'plain');
     };
     const inf = pick('infantry');
     near(inf);
@@ -261,6 +282,58 @@ describe('combat', () => {
     assert.equal(g.forecast(a, d).killChance, 0.25);
     d.hp = 3;
     assert.equal(g.forecast(a, d).killChance, 0);
+  });
+});
+
+describe('terrain combat', () => {
+  function board(): Game {
+    const g = new Game(1);
+    for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
+    return g;
+  }
+  const at = (col: number, row: number) => fromOffset(col, row);
+  const set = (g: Game, col: number, row: number, t: Terrain) => g.map.tiles.set(key(at(col, row)), t);
+
+  it('forest and villages protect by attacker type', () => {
+    const g = board();
+    for (const t of ['forest', 'village'] as const) {
+      set(g, 5, 4, t);
+      assert.equal(g.diceAt('infantry', at(4, 4), at(5, 4)), 2);
+      assert.equal(g.diceAt('armour', at(4, 4), at(5, 4)), 0);
+      assert.equal(g.diceAt('artillery', at(4, 4), at(5, 4)), 3);
+    }
+  });
+  it('hills protect only against attackers below them', () => {
+    const g = board();
+    set(g, 5, 4, 'hills');
+    assert.equal(g.diceAt('infantry', at(4, 4), at(5, 4)), 2);
+    assert.equal(g.diceAt('armour', at(3, 4), at(5, 4)), 1);
+    set(g, 4, 4, 'hills');
+    assert.equal(g.diceAt('infantry', at(4, 4), at(5, 4)), 3);
+  });
+  it('armour attacking from a village loses two dice, on top of the target\'s cover', () => {
+    const g = board();
+    set(g, 4, 4, 'village');
+    assert.equal(g.diceAt('armour', at(4, 4), at(5, 4)), 0);
+    assert.equal(g.diceAt('infantry', at(4, 4), at(5, 4)), 3);
+    set(g, 4, 4, 'plain');
+    set(g, 2, 4, 'village');
+    set(g, 4, 4, 'hills');
+    // Armour in a village (-2) at a hill 2 away (-1): 2 - 3 = no dice, so no attack.
+    assert.equal(g.diceAt('armour', at(2, 4), at(4, 4)), 0);
+  });
+  it('no attack on a turn a unit moved onto forest or a village', () => {
+    const g = board();
+    const inf = g.unitsOf('allied').find((u) => u.type === 'infantry')!;
+    const enemy = g.unitsOf('axis')[0];
+    g.units = [inf, enemy];
+    inf.pos = at(4, 4);
+    enemy.pos = at(5, 4);
+    set(g, 4, 4, 'forest');
+    assert.ok(g.targetsFrom(inf, inf.pos, 0).includes(enemy), 'can attack if it started there');
+    assert.deepEqual(g.targetsFrom(inf, inf.pos, 1), []);
+    set(g, 4, 4, 'hills');
+    assert.ok(g.targetsFrom(inf, inf.pos, 1).includes(enemy));
   });
 });
 
@@ -303,12 +376,24 @@ describe('line of sight', () => {
     set(g, 6, 4, 'hills');
     assert.ok(g.lineOfSight(at(2, 4), at(6, 4)));
   });
-  it('is blocked by two lake hexes but not one', () => {
+  it('between hills is only blocked by units on hills', () => {
+    const g = board();
+    set(g, 2, 4, 'hills');
+    set(g, 6, 4, 'hills');
+    set(g, 3, 4, 'forest');
+    g.units[1].pos = at(5, 4);
+    assert.ok(g.lineOfSight(at(2, 4), at(6, 4)), 'forest and a unit off the hills do not block');
+    set(g, 5, 4, 'hills');
+    assert.ok(!g.lineOfSight(at(2, 4), at(6, 4)), 'a unit on a hill blocks');
+  });
+  it('is blocked by two adjacent lake hexes but not by separate ones', () => {
     const g = board();
     set(g, 3, 4, 'water');
-    assert.ok(g.lineOfSight(at(1, 4), at(6, 4)));
+    assert.ok(g.lineOfSight(at(1, 4), at(7, 4)));
+    set(g, 5, 4, 'water');
+    assert.ok(g.lineOfSight(at(1, 4), at(7, 4)));
     set(g, 4, 4, 'water');
-    assert.ok(!g.lineOfSight(at(1, 4), at(6, 4)));
+    assert.ok(!g.lineOfSight(at(1, 4), at(7, 4)));
   });
   it('along a hex edge is only blocked by obstructions on both sides', () => {
     const g = board();

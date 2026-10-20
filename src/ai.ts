@@ -10,26 +10,26 @@ export interface AIPlan {
 }
 
 // Scoring weights. Tuned to play aggressively rather than optimally: a cautious AI wins more
-// often on points but turns most games into a stand-off that runs to the turn limit.
+// often on points but turns most games into a stand-off that runs to the turn limit. It starts
+// patient, holding cover, and grows bolder quickly as the turns pass.
 const ATTACK_WEIGHT = 4;
-const CLOSE_WEIGHT = 1.5;
+const CLOSE_WEIGHT = 0.8;
 const TERRAIN_WEIGHT = 2;
 const DANGER_WEIGHT = 2.5;
 /** Caution falls by this much each turn, and per point of score the side is behind. */
-const CAUTION_PER_TURN = 0.03;
+const CAUTION_PER_TURN = 0.06;
 const CAUTION_PER_POINT_BEHIND = 0.1;
-const MIN_CAUTION = 0.3;
+const MIN_CAUTION = 0.1;
 
 /**
  * Expected damage `unit` would take on `hex` if every enemy attacked it next turn,
  * each moving as far as it can while still being allowed to attack.
  */
 function danger(game: Game, unit: Unit, hex: Hex, enemies: Unit[]): number {
-  const lost = TERRAIN[game.map.terrain(hex)!].diceLost;
   let total = 0;
   for (const e of enemies) {
     const d = Math.max(1, distance(e.pos, hex) - UNIT_SPECS[e.type].attackMove);
-    const dice = Math.max(0, attackAt(e.type, d) - (e.type === 'artillery' ? 0 : lost));
+    const dice = Math.max(0, attackAt(e.type, d) - game.diceLost(e.type, e.pos, hex));
     total += dice * hitChance(unit.type);
   }
   return total;
@@ -86,7 +86,8 @@ export function planAction(game: Game): AIPlan | null {
     }
 
     // Forest and hills cost most attackers a die, so hold them.
-    score += TERRAIN[game.map.terrain(hex)!].diceLost * TERRAIN_WEIGHT * caution;
+    const cover = TERRAIN[game.map.terrain(hex)!].protection;
+    score += ((cover.infantry + cover.armour) / 2) * TERRAIN_WEIGHT * caution;
 
     // Danger: expected damage from enemy attacks next turn (forest, hills and villages reduce it).
     const fragile = 1 + (1 - hpFrac(unit)) * 1.25 + (unit.type === 'artillery' ? 0.5 : 0);
