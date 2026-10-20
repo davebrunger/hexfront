@@ -43,6 +43,7 @@ Add an optional `units` list, laid out the same way, to set the starting positio
 - Each unit may **move, then attack once**. Attacking ends its move. Infantry can move 1 space and attack, or 2 without attacking; Armour can move up to 3 and attack; Artillery can attack, or move 1.
 - **Attacking** rolls one die per point of attack, which falls off with range. Dice faces are Infantry, Infantry, Armour, Grenade, Flag, Star; each grenade or face matching the target's type does 1 damage. There is no return fire.
 - **Terrain:** every hex costs 1 space to enter, entering forest, hills or a village ends your move, and lakes and rivers are impassable except at bridges. Attacks on units in forest, on hills or in a village roll one die fewer, except from artillery.
+- **Line of sight:** every unit except artillery needs a clear line from its hex centre to the target's. Units, forest, villages and the half hexes at the side edges block it; so do hills, unless both units are on hills, and lakes, if the line crosses two lake hexes. The attacker's and target's own hexes never block, and a line running along hex edges is only blocked if both sides are obstructed.
 - **Zones of control:** entering a hex next to an enemy ends your move.
 
 Keys: `Esc` cancel · `N` next ready unit · `Space` end turn.

@@ -4,6 +4,7 @@ import { planAction } from '../src/ai';
 import { DIE_FACES, MAX_TURNS, TERRAIN, attackAt, dieHits, isRiver, rangeOf } from '../src/data';
 import { Game } from '../src/game';
 import { distance, eq, fromOffset, key, neighbors } from '../src/hex';
+import type { Terrain } from '../src/types';
 import { MAP_HEIGHT, MAP_WIDTH, MAP_LETTERS, PRESET_MAPS, parseMap, parseUnits, rowWidth } from '../src/map';
 
 /** Execute an AI plan without any animation (mirrors what the UI controller does). */
@@ -260,6 +261,79 @@ describe('combat', () => {
     assert.equal(g.forecast(a, d).killChance, 0.25);
     d.hp = 3;
     assert.equal(g.forecast(a, d).killChance, 0);
+  });
+});
+
+describe('line of sight', () => {
+  /** A game on an all-open board with just one unit per side, `from` attacking `to`. */
+  function board(): Game {
+    const g = new Game(1);
+    for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
+    g.units = [g.unitsOf('allied').find((u) => u.type === 'infantry')!, g.unitsOf('axis')[0]];
+    return g;
+  }
+  const at = (col: number, row: number) => fromOffset(col, row);
+  const set = (g: Game, col: number, row: number, t: Terrain) => g.map.tiles.set(key(at(col, row)), t);
+
+  it('is clear across open ground and blocked by units and forest', () => {
+    const g = board();
+    assert.ok(g.lineOfSight(at(2, 4), at(6, 4)));
+    set(g, 4, 4, 'forest');
+    assert.ok(!g.lineOfSight(at(2, 4), at(6, 4)));
+    set(g, 4, 4, 'village');
+    assert.ok(!g.lineOfSight(at(2, 4), at(6, 4)));
+    set(g, 4, 4, 'plain');
+    g.units[1].pos = at(5, 4);
+    assert.ok(!g.lineOfSight(at(2, 4), at(6, 4)));
+  });
+  it('ignores terrain in the attacker and target hexes, and rivers and bridges', () => {
+    const g = board();
+    set(g, 2, 4, 'forest');
+    set(g, 6, 4, 'village');
+    set(g, 3, 4, 'river');
+    set(g, 4, 4, 'bridge');
+    assert.ok(g.lineOfSight(at(2, 4), at(6, 4)));
+  });
+  it('lets hills be seen across only from hill to hill', () => {
+    const g = board();
+    set(g, 4, 4, 'hills');
+    assert.ok(!g.lineOfSight(at(2, 4), at(6, 4)));
+    set(g, 2, 4, 'hills');
+    assert.ok(!g.lineOfSight(at(2, 4), at(6, 4)));
+    set(g, 6, 4, 'hills');
+    assert.ok(g.lineOfSight(at(2, 4), at(6, 4)));
+  });
+  it('is blocked by two lake hexes but not one', () => {
+    const g = board();
+    set(g, 3, 4, 'water');
+    assert.ok(g.lineOfSight(at(1, 4), at(6, 4)));
+    set(g, 4, 4, 'water');
+    assert.ok(!g.lineOfSight(at(1, 4), at(6, 4)));
+  });
+  it('along a hex edge is only blocked by obstructions on both sides', () => {
+    const g = board();
+    // The line from (4,2) to (4,4) runs along the edge between (3,3) and (4,3).
+    set(g, 3, 3, 'forest');
+    assert.ok(g.lineOfSight(at(4, 2), at(4, 4)));
+    set(g, 4, 3, 'forest');
+    assert.ok(!g.lineOfSight(at(4, 2), at(4, 4)));
+  });
+  it('treats the half hexes at the side edges as obstructions', () => {
+    const g = board();
+    // Along the left edge, the line from (0,2) to (0,4) has the off-board half hex on one side.
+    assert.ok(g.lineOfSight(at(0, 2), at(0, 4)));
+    set(g, 0, 3, 'forest');
+    assert.ok(!g.lineOfSight(at(0, 2), at(0, 4)));
+  });
+  it('limits targets for all units except artillery', () => {
+    const g = board();
+    const [inf, enemy] = g.units;
+    inf.pos = at(2, 4);
+    enemy.pos = at(4, 4);
+    set(g, 3, 4, 'forest');
+    assert.deepEqual(g.attackTargets(inf), []);
+    inf.type = 'artillery';
+    assert.deepEqual(g.attackTargets(inf), [enemy]);
   });
 });
 

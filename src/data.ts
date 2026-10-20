@@ -79,21 +79,20 @@ export interface TerrainInfo {
   passable: boolean;
   /** Entering this terrain ends the unit's movement for the turn. */
   stopsMove: boolean;
+  /** Hexes of this terrain a line of sight must cross to be blocked (0: never blocks sight). */
+  blocksSight: number;
+  /** Doesn't block sight between an attacker and target that both stand on this terrain. */
+  seeAcrossFromSame: boolean;
 }
 
 export const TERRAIN: Record<Terrain, TerrainInfo> = {
-  plain: { name: 'Open ground', diceLost: 0, passable: true, stopsMove: false },
-  forest: { name: 'Forest', diceLost: 1, passable: true, stopsMove: true },
-  village: { name: 'Village', diceLost: 1, passable: true, stopsMove: true },
-  hills: { name: 'Hills', diceLost: 1, passable: true, stopsMove: true },
-  water: {
-    name: 'Lake',
-    diceLost: 0,
-    passable: false,
-    stopsMove: false,
-  },
-  river: { name: 'River', diceLost: 0, passable: false, stopsMove: false },
-  bridge: { name: 'Bridge', diceLost: 0, passable: true, stopsMove: false },
+  plain: { name: 'Open ground', diceLost: 0, passable: true, stopsMove: false, blocksSight: 0, seeAcrossFromSame: false },
+  forest: { name: 'Forest', diceLost: 1, passable: true, stopsMove: true, blocksSight: 1, seeAcrossFromSame: false },
+  village: { name: 'Village', diceLost: 1, passable: true, stopsMove: true, blocksSight: 1, seeAcrossFromSame: false },
+  hills: { name: 'Hills', diceLost: 1, passable: true, stopsMove: true, blocksSight: 1, seeAcrossFromSame: true },
+  water: { name: 'Lake', diceLost: 0, passable: false, stopsMove: false, blocksSight: 2, seeAcrossFromSame: false },
+  river: { name: 'River', diceLost: 0, passable: false, stopsMove: false, blocksSight: 0, seeAcrossFromSame: false },
+  bridge: { name: 'Bridge', diceLost: 0, passable: true, stopsMove: false, blocksSight: 0, seeAcrossFromSame: false },
 };
 
 /** River hexes, with or without a bridge; drawn as one continuous river. */

@@ -14,7 +14,7 @@ export interface AIPlan {
 const ATTACK_WEIGHT = 4;
 const CLOSE_WEIGHT = 1.5;
 const TERRAIN_WEIGHT = 2;
-const DANGER_WEIGHT = 2;
+const DANGER_WEIGHT = 2.5;
 /** Caution falls by this much each turn, and per point of score the side is behind. */
 const CAUTION_PER_TURN = 0.03;
 const CAUTION_PER_POINT_BEHIND = 0.1;

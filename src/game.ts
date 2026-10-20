@@ -1,5 +1,5 @@
 import { DIE_FACES, DIE_LABELS, MAX_TURNS, SIDE_NAMES, TERRAIN, UNIT_SPECS, attackAt, dieHits, hitChance, rangeOf, type DieFace } from './data';
-import { distance, eq, fromOffset, key, neighbors } from './hex';
+import { distance, eq, fromOffset, hexesOnLine, key, neighbors } from './hex';
 import { generateMap, mulberry32, parseMap, parseUnits, type Deployment, type GameMap, type MapDef } from './map';
 import type { Hex, LogEntry, Side, Unit, UnitType } from './types';
 
@@ -176,8 +176,40 @@ export class Game {
     if (spaces > UNIT_SPECS[u.type].attackMove) return [];
     const range = rangeOf(u.type);
     return this.units.filter(
-      (e) => e.side !== u.side && distance(from, e.pos) <= range && this.diceFor(u, from, e) > 0,
+      (e) =>
+        e.side !== u.side &&
+        distance(from, e.pos) <= range &&
+        this.diceFor(u, from, e) > 0 &&
+        (u.type === 'artillery' || this.lineOfSight(from, e.pos, u)),
     );
+  }
+
+  /**
+   * Whether a unit on `from` can see `to`. Units, sight-blocking terrain and anything off the board
+   * (such as the half hexes at the ends of the short rows) between the two hexes block it; the two
+   * hexes themselves never do. `ignore` is left out as an obstruction (a unit considering a move).
+   * A line running along hex edges is only blocked if there are obstructions on both sides of it,
+   * so the line is checked nudged slightly to each side and blocked only if both are.
+   */
+  lineOfSight(from: Hex, to: Hex, ignore?: Unit): boolean {
+    const ends = [this.map.terrain(from), this.map.terrain(to)];
+    const clear = (offset: number) => {
+      const counts = new Map<string, number>();
+      for (const h of hexesOnLine(from, to, offset)) {
+        if (eq(h, from) || eq(h, to)) continue;
+        const unit = this.unitAt(h);
+        if (unit && unit !== ignore) return false;
+        const t = this.map.terrain(h);
+        if (!t) return false;
+        const info = TERRAIN[t];
+        if (!info.blocksSight || (info.seeAcrossFromSame && ends[0] === t && ends[1] === t)) continue;
+        const n = (counts.get(t) ?? 0) + 1;
+        if (n >= info.blocksSight) return false;
+        counts.set(t, n);
+      }
+      return true;
+    };
+    return clear(1e-4) || clear(-1e-4);
   }
 
   attackTargets(u: Unit): Unit[] {
