@@ -19,8 +19,8 @@ Add `?seed=1234` to the URL to replay a specific map.
 
 - Win by **wiping out the enemy**, or by having more strength left at the end of turn 30.
 - Each unit may **move, then attack once**. Attacking ends its move. Artillery cannot move *and* fire.
-- **Terrain** changes movement cost and defence (hills and forest defend best; lakes are impassable).
-- **Flanking:** each other friendly unit adjacent to the target adds +20% attack (max +40%).
+- **Attack falls off with range**, and there is no return fire.
+- **Terrain** changes movement cost and reduces damage taken (hills and forest protect best; lakes are impassable).
 - **Zones of control:** entering a hex next to an enemy ends your move.
 - Units that stay still heal.
 

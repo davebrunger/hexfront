@@ -7,11 +7,8 @@ export interface UnitSpec {
   /** Full strength; a unit at 0 is destroyed. */
   maxHp: number;
   move: number;
-  attack: number;
-  defence: number;
-  range: number;
-  /** Relative worth, used for the end-of-game score and by the AI. */
-  value: number;
+  /** Attack value by distance to the target: index 0 is adjacent. Its length is the unit's range. */
+  attack: number[];
   blurb: string;
 }
 
@@ -20,40 +17,37 @@ export const UNIT_SPECS: Record<UnitType, UnitSpec> = {
     name: 'Infantry',
     maxHp: 4,
     move: 3,
-    attack: 4,
-    defence: 5,
-    range: 1,
-    value: 4,
+    attack: [3, 2, 1],
     blurb: 'Sturdy and dependable. Best at holding rough ground.',
   },
   armour: {
     name: 'Armour',
     maxHp: 3,
     move: 5,
-    attack: 8,
-    defence: 6,
-    range: 1,
-    value: 8,
+    attack: [2, 2, 2],
     blurb: 'Fast and hard-hitting, but bogs down in forest and hills.',
   },
   artillery: {
     name: 'Artillery',
     maxHp: 2,
     move: 2,
-    attack: 7,
-    defence: 2,
-    range: 2,
-    value: 6,
-    blurb: 'Shells targets 2 hexes away without return fire. Cannot move and fire in one turn.',
+    attack: [3, 3, 2, 2, 1, 1],
+    blurb: 'Shells targets up to 6 hexes away. Cannot move and fire in one turn.',
   },
 };
+
+/** Furthest distance a unit type can attack. */
+export const rangeOf = (t: UnitType) => UNIT_SPECS[t].attack.length;
+
+/** Attack value of a unit type against a target `dist` hexes away (0 if out of range). */
+export const attackAt = (t: UnitType, dist: number) => UNIT_SPECS[t].attack[dist - 1] ?? 0;
 
 /** Fraction of full strength remaining. */
 export const hpFrac = (u: { type: UnitType; hp: number }) => u.hp / UNIT_SPECS[u.type].maxHp;
 
 export interface TerrainInfo {
   name: string;
-  /** Multiplier applied to the defender's defence value. */
+  /** Divisor applied to damage taken by a unit on this terrain. */
   defence: number;
   /** Movement point cost per unit type (Infinity = impassable). */
   cost: Record<UnitType, number>;

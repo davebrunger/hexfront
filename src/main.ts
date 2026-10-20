@@ -1,6 +1,6 @@
 import './style.css';
 import { planAction, type AIPlan } from './ai';
-import { MAX_TURNS, TERRAIN, UNIT_SPECS, hpFrac } from './data';
+import { MAX_TURNS, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
 import { Game } from './game';
 import { eq, key } from './hex';
 import { EMPTY_OVERLAY, Renderer, sleep, type Overlay } from './render';
@@ -89,7 +89,7 @@ function renderPanel(): void {
   pill.textContent = mine ? 'Your move' : 'Enemy move';
   pill.className = `side-pill ${game.current}`;
   $('forces').textContent = `${game.unitsOf(HUMAN).length} v ${game.unitsOf(AI_SIDE).length}`;
-  $('score').textContent = `${game.score(HUMAN).toFixed(1)} v ${game.score(AI_SIDE).toFixed(1)}`;
+  $('score').textContent = `${game.score(HUMAN)} v ${game.score(AI_SIDE)}`;
   ($('end-turn') as HTMLButtonElement).disabled = !mine || busy || !!game.winner;
 
   renderInspect();
@@ -120,7 +120,7 @@ function renderInspect(): void {
     html += `<div class="unit-card ${u.side}">
       <div class="uc-head"><span class="swatch ${u.side}"></span><b>${s.name}</b><span class="muted">${u.side === HUMAN ? 'yours' : 'enemy'} · ${status}</span></div>
       <div class="bar-wrap"><div class="bar-fill ${hpFrac(u) <= 0.35 ? 'low' : hpFrac(u) <= 0.7 ? 'mid' : ''}" style="width:${hpFrac(u) * 100}%"></div></div>
-      <div class="statgrid">${statRow('Strength', `${u.hp}/${s.maxHp}`)}${statRow('Move', s.move)}${statRow('Attack', s.attack)}${statRow('Defence', s.defence)}${statRow('Range', s.range)}</div>
+      <div class="statgrid">${statRow('Strength', `${u.hp}/${s.maxHp}`)}${statRow('Move', s.move)}${statRow('Attack', s.attack.join(' / '))}${statRow('Range', rangeOf(u.type))}</div>
       <p class="muted small">${s.blurb}</p></div>`;
   }
   box.innerHTML = html;

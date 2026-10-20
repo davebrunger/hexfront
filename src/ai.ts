@@ -1,4 +1,4 @@
-import { TERRAIN, UNIT_SPECS, hpFrac } from './data';
+import { TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
 import { distance, eq } from './hex';
 import { other, type Game } from './game';
 import type { Hex, Unit } from './types';
@@ -8,8 +8,6 @@ export interface AIPlan {
   dest: Hex | null;
   target: Unit | null;
 }
-
-const value = (u: Unit) => UNIT_SPECS[u.type].value / 6;
 
 /**
  * Decide the next thing the current side's AI wants to do. Returns null when it has nothing left.
@@ -40,7 +38,7 @@ export function planAction(game: Game): AIPlan | null {
     let targetVal = -Infinity;
     for (const t of game.targetsFrom(unit, hex, moved || unit.moved)) {
       const f = game.forecast(unit, t, hex);
-      const v = f.dealt * value(t) + (f.kills ? value(t) * 3 : 0) - f.taken * value(unit) * 0.8;
+      const v = f.dealt + (f.kills ? 3 : 0);
       if (v > targetVal) {
         targetVal = v;
         target = t;
@@ -62,7 +60,7 @@ export function planAction(game: Game): AIPlan | null {
     }
 
     // Danger: enemies that could reach this hex next turn.
-    const threat = enemies.filter((e) => distance(e.pos, hex) <= UNIT_SPECS[e.type].move + UNIT_SPECS[e.type].range - 1).length;
+    const threat = enemies.filter((e) => distance(e.pos, hex) <= UNIT_SPECS[e.type].move + rangeOf(e.type) - 1).length;
     const fragile = 1 + (1 - hpFrac(unit)) * 1.25 + (unit.type === 'artillery' ? 0.8 : 0);
     score -= threat * 0.35 * fragile;
 

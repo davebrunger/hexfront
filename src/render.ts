@@ -24,7 +24,7 @@ export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 export interface Overlay {
   selected: Hex | null;
   moves: Hex[];
-  targets: { hex: Hex; dealt: number; taken: number; kills: boolean }[];
+  targets: { hex: Hex; dealt: number; kills: boolean }[];
   path: Hex[];
 }
 
@@ -180,7 +180,7 @@ export class Renderer {
       poly(t.hex, 'hl-attack');
       const { x, y } = toPixel(t.hex, SIZE);
       const g = el('g', { transform: `translate(${x},${y - 26})`, class: 'forecast' }, layer);
-      const label = t.kills ? `−${t.dealt} ☠` : `−${t.dealt}${t.taken ? ` / +${t.taken}` : ''}`;
+      const label = t.kills ? `−${t.dealt} ☠` : `−${t.dealt}`;
       const w = label.length * 6 + 10;
       el('rect', { x: -w / 2, y: -8, width: w, height: 15, rx: 4 }, g);
       const txt = el('text', { x: 0, y: 3 }, g);
@@ -319,17 +319,8 @@ export class Renderer {
     this.syncUnits();
     await sleep(380);
     d?.body.classList.remove('hit');
-    if (res.dmgToAttacker > 0 || (res.attackerDied && !res.defenderDied)) {
-      if (d && !res.defenderDied) await this.lunge(d, dp, ap);
-      a?.body.classList.add('hit');
-      this.float(ap, `−${res.dmgToAttacker}`, 'dmg');
-      this.syncUnits();
-      await sleep(380);
-      a?.body.classList.remove('hit');
-    }
     if (res.defenderDied) this.float(dp, '✖', 'kill');
-    if (res.attackerDied) this.float(ap, '✖', 'kill');
-    await sleep(res.defenderDied || res.attackerDied ? 450 : 120);
+    await sleep(res.defenderDied ? 450 : 120);
   }
 
   hexFromEvent(e: Event): Hex | null {

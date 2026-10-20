@@ -1,4 +1,4 @@
-import { MAX_TURNS, TERRAIN, UNIT_SPECS, hpFrac } from './data';
+import { MAX_TURNS, TERRAIN, UNIT_SPECS, attackAt, rangeOf } from './data';
 import { distance, eq, fromOffset, key, neighbors } from './hex';
 import { generateMap, mulberry32, type GameMap } from './map';
 import type { Hex, LogEntry, Side, Unit, UnitType } from './types';
@@ -11,7 +11,6 @@ export interface Reach {
 
 export interface Forecast {
   dealt: number;
-  taken: number;
   kills: boolean;
 }
 
@@ -19,9 +18,7 @@ export interface CombatResult {
   attacker: Unit;
   defender: Unit;
   dmgToDefender: number;
-  dmgToAttacker: number;
   defenderDied: boolean;
-  attackerDied: boolean;
   ranged: boolean;
 }
 
@@ -140,7 +137,7 @@ export class Game {
   targetsFrom(u: Unit, from: Hex, hasMoved: boolean): Unit[] {
     if (u.attacked || u.side !== this.current) return [];
     if (u.type === 'artillery' && hasMoved) return [];
-    const range = UNIT_SPECS[u.type].range;
+    const range = rangeOf(u.type);
     return this.units.filter((e) => e.side !== u.side && distance(from, e.pos) <= range);
   }
 
@@ -150,55 +147,36 @@ export class Game {
 
   // ----------------------------------------------------------------- combat
 
-  private calc(a: Unit, aHp: number, d: Unit, dHp: number, dHex: Hex, roll: number, min: number): number {
-    const flank = this.units.filter(
-      (f) => f.side === a.side && f.id !== a.id && distance(f.pos, dHex) === 1,
-    ).length;
-    const atk = UNIT_SPECS[a.type].attack * strengthFactor(a, aHp) * (1 + 0.2 * Math.min(2, flank));
-    const terrain = this.map.terrain(dHex) ?? 'plain';
-    const def = UNIT_SPECS[d.type].defence * TERRAIN[terrain].defence * strengthFactor(d, dHp);
-    const dmg = Math.round(3.5 * (atk / def) * roll);
-    return Math.max(min, Math.min(dmg, dHp));
+  private calc(a: Unit, aHex: Hex, d: Unit, roll: number): number {
+    const atk = attackAt(a.type, distance(aHex, d.pos)) * strengthFactor(a, a.hp);
+    const terrain = this.map.terrain(d.pos) ?? 'plain';
+    const dmg = Math.round((atk / TERRAIN[terrain].defence) * roll);
+    return Math.max(1, Math.min(dmg, d.hp));
   }
 
   /** Expected outcome (roll = 1) of `att` attacking `def` from `attHex`. */
   forecast(att: Unit, def: Unit, attHex: Hex = att.pos): Forecast {
-    const dealt = this.calc(att, att.hp, def, def.hp, def.pos, 1, 1);
-    const left = def.hp - dealt;
-    let taken = 0;
-    if (left > 0 && distance(attHex, def.pos) <= UNIT_SPECS[def.type].range) {
-      taken = this.calc(def, left, att, att.hp, attHex, 1, 0);
-    }
-    return { dealt, taken, kills: left <= 0 };
+    const dealt = this.calc(att, attHex, def, 1);
+    return { dealt, kills: dealt >= def.hp };
   }
 
   attack(att: Unit, def: Unit): CombatResult {
     if (!this.attackTargets(att).includes(def)) throw new Error('Illegal attack');
-    const roll = () => 0.75 + this.rng() * 0.5;
-    const dealt = this.calc(att, att.hp, def, def.hp, def.pos, roll(), 1);
+    const dealt = this.calc(att, att.pos, def, 0.75 + this.rng() * 0.5);
     def.hp -= dealt;
-    let taken = 0;
-    if (def.hp > 0 && distance(att.pos, def.pos) <= UNIT_SPECS[def.type].range) {
-      taken = this.calc(def, def.hp, att, att.hp, att.pos, roll(), 0);
-      att.hp -= taken;
-    }
     att.attacked = true;
     att.mp = 0;
     const result: CombatResult = {
       attacker: att,
       defender: def,
       dmgToDefender: dealt,
-      dmgToAttacker: taken,
       defenderDied: def.hp <= 0,
-      attackerDied: att.hp <= 0,
       ranged: distance(att.pos, def.pos) > 1,
     };
     const an = UNIT_SPECS[att.type].name;
     const dn = UNIT_SPECS[def.type].name;
     let text = `${an} hits ${dn} for ${dealt}`;
-    if (taken) text += `, takes ${taken} in return`;
     if (result.defenderDied) text += ` — ${dn} destroyed!`;
-    if (result.attackerDied) text += ` — ${an} lost!`;
     this.addLog(att.side, text);
     this.units = this.units.filter((u) => u.hp > 0);
     this.checkVictory();
@@ -250,9 +228,9 @@ export class Game {
     }
   }
 
-  /** Remaining strength of a side's army, weighted by unit value. */
+  /** Remaining strength (total HP) of a side's army. */
   score(side: Side): number {
-    return this.unitsOf(side).reduce((s, u) => s + hpFrac(u) * (UNIT_SPECS[u.type].value / 2), 0);
+    return this.unitsOf(side).reduce((s, u) => s + u.hp, 0);
   }
 
   private decideByScore(): void {

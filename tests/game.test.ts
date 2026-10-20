@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { planAction } from '../src/ai';
-import { MAX_TURNS } from '../src/data';
+import { MAX_TURNS, attackAt, rangeOf } from '../src/data';
 import { Game } from '../src/game';
 import { distance, eq, key, neighbors } from '../src/hex';
 import { MAP_HEIGHT, MAP_WIDTH } from '../src/map';
@@ -99,19 +99,34 @@ describe('movement', () => {
 });
 
 describe('combat', () => {
-  it('damages the defender and applies counter-fire only within range', () => {
+  it('damages the defender without return fire', () => {
     const g = new Game(3);
     const art = g.unitsOf('blue').find((u) => u.type === 'artillery')!;
     const inf = g.unitsOf('red').find((u) => u.type === 'infantry')!;
-    inf.pos = { q: art.pos.q + 2, r: art.pos.r }; // range 2 away
+    inf.pos = { q: art.pos.q + 1, r: art.pos.r }; // adjacent, well within infantry range
     g.map.tiles.set(key(inf.pos), 'plain');
     const before = inf.hp;
+    const artHp = art.hp;
     const res = g.attack(art, inf);
-    assert.ok(res.ranged);
     assert.ok(res.dmgToDefender >= 1);
     assert.equal(inf.hp, before - res.dmgToDefender);
-    assert.equal(res.dmgToAttacker, 0, 'infantry cannot return fire at range 2');
+    assert.equal(art.hp, artHp);
     assert.equal(art.attacked, true);
+  });
+  it('attack value falls off with distance', () => {
+    assert.deepEqual([1, 2, 3, 4].map((d) => attackAt('infantry', d)), [3, 2, 1, 0]);
+    assert.equal(rangeOf('artillery'), 6);
+    const g = new Game(3);
+    const art = g.unitsOf('blue').find((u) => u.type === 'artillery')!;
+    const inf = g.unitsOf('red').find((u) => u.type === 'infantry')!;
+    inf.pos = { q: art.pos.q + 1, r: art.pos.r };
+    g.map.tiles.set(key(inf.pos), 'plain');
+    const near = g.forecast(art, inf);
+    inf.pos = { q: art.pos.q + 5, r: art.pos.r };
+    g.map.tiles.set(key(inf.pos), 'plain');
+    const far = g.forecast(art, inf);
+    assert.equal(near.dealt, 3);
+    assert.equal(far.dealt, 1);
   });
   it('artillery cannot fire after moving', () => {
     const g = new Game(3);
