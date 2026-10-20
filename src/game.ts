@@ -1,4 +1,4 @@
-import { DIE_FACES, DIE_LABELS, MAX_TURNS, TERRAIN, UNIT_SPECS, attackAt, dieHits, hitChance, rangeOf, type DieFace } from './data';
+import { DIE_FACES, DIE_LABELS, MAX_TURNS, SIDE_NAMES, TERRAIN, UNIT_SPECS, attackAt, dieHits, hitChance, rangeOf, type DieFace } from './data';
 import { distance, eq, fromOffset, key, neighbors } from './hex';
 import { generateMap, mulberry32, parseMap, parseUnits, type Deployment, type GameMap, type MapDef } from './map';
 import type { Hex, LogEntry, Side, Unit, UnitType } from './types';
@@ -26,10 +26,10 @@ export interface CombatResult {
   ranged: boolean;
 }
 
-export const other = (s: Side): Side => (s === 'blue' ? 'red' : 'blue');
+export const other = (s: Side): Side => (s === 'allied' ? 'axis' : 'allied');
 
-// Standard starting units for blue (the player, at the bottom) in offset coords (col, row);
-// red (at the top) gets the point-mirrored positions. Preset maps may set their own.
+// Standard starting units for the Allies (at the bottom, moving first) in offset coords (col, row);
+// the Axis (at the top) gets the point-mirrored positions. Preset maps may set their own.
 const START_UNITS: [UnitType, number, number][] = [
   ['infantry', 1, 7],
   ['infantry', 4, 7],
@@ -56,7 +56,7 @@ export class Game {
   readonly map: GameMap;
   units: Unit[] = [];
   turn = 1;
-  current: Side = 'blue';
+  current: Side = 'allied';
   winner: Side | 'draw' | null = null;
   winReason = '';
   log: LogEntry[] = [];
@@ -73,15 +73,15 @@ export class Game {
     const units: Deployment[] =
       (mapDef && parseUnits(mapDef)) ??
       START_UNITS.flatMap(([type, col, row]) => [
-        { side: 'blue' as const, type, pos: fromOffset(col, row) },
-        { side: 'red' as const, type, pos: this.map.mirror(fromOffset(col, row)) },
+        { side: 'allied' as const, type, pos: fromOffset(col, row) },
+        { side: 'axis' as const, type, pos: this.map.mirror(fromOffset(col, row)) },
       ]);
     for (const { side, type, pos } of units) {
       const t = this.map.terrain(pos);
       if (!t || !TERRAIN[t].passable) throw new Error(`Map has impassable terrain at a ${side} starting hex`);
       this.spawn(side, type, pos);
     }
-    for (const side of ['blue', 'red'] as const) {
+    for (const side of ['allied', 'axis'] as const) {
       if (!this.unitsOf(side).length) throw new Error(`Map has no ${side} units`);
     }
     this.startTurn();
@@ -115,7 +115,7 @@ export class Game {
     return u.spaces;
   }
 
-  /** Entering `h` ends movement: forest, hills, or next to an enemy. */
+  /** Entering `h` ends movement: forest, hills, villages, or next to an enemy. */
   stopsMovement(side: Side, h: Hex): boolean {
     const t = this.map.terrain(h);
     return (t !== undefined && TERRAIN[t].stopsMove) || this.inEnemyZoc(side, h);
@@ -136,7 +136,7 @@ export class Game {
       frontier.sort((a, b) => a.cost - b.cost);
       const cur = frontier.shift()!;
       if (cur.cost > result.get(key(cur.hex))!.cost) continue;
-      // Entering forest, hills or an enemy zone of control ends movement (leaving is free).
+      // Entering forest, hills, a village or an enemy zone of control ends movement (leaving is free).
       if (!eq(cur.hex, u.pos) && this.stopsMovement(u.side, cur.hex)) continue;
       for (const n of neighbors(cur.hex)) {
         const t = this.map.terrain(n);
@@ -242,12 +242,12 @@ export class Game {
 
   endTurn(): void {
     if (this.winner) return;
-    if (this.current === 'red' && this.turn >= MAX_TURNS) {
+    if (this.current === 'axis' && this.turn >= MAX_TURNS) {
       this.decideByScore();
       return;
     }
     this.current = other(this.current);
-    if (this.current === 'blue') this.turn++;
+    if (this.current === 'allied') this.turn++;
     this.startTurn();
   }
 
@@ -272,19 +272,19 @@ export class Game {
   }
 
   private decideByScore(): void {
-    const b = this.score('blue');
-    const r = this.score('red');
-    this.winner = Math.abs(b - r) < 0.5 ? 'draw' : b > r ? 'blue' : 'red';
-    this.winReason = `Turn limit reached. Blue scored ${b.toFixed(1)}, Red ${r.toFixed(1)}.`;
+    const a = this.score('allied');
+    const x = this.score('axis');
+    this.winner = a === x ? 'draw' : a > x ? 'allied' : 'axis';
+    this.winReason = `Turn limit reached. ${SIDE_NAMES.allied} scored ${a}, ${SIDE_NAMES.axis} ${x}.`;
     this.addLog(null, this.winReason);
   }
 
   private checkVictory(): void {
     if (this.winner) return;
-    for (const s of ['blue', 'red'] as Side[]) {
+    for (const s of ['allied', 'axis'] as Side[]) {
       if (this.unitsOf(s).length === 0) {
         this.winner = other(s);
-        this.winReason = `${s === 'blue' ? 'Blue' : 'Red'} has no forces left.`;
+        this.winReason = `${SIDE_NAMES[s]} has no forces left.`;
       }
       if (this.winner) {
         this.addLog(null, this.winReason);

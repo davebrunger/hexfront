@@ -4,9 +4,9 @@ export interface Hex {
   r: number;
 }
 
-export type Side = 'blue' | 'red';
+export type Side = 'allied' | 'axis';
 export type UnitType = 'infantry' | 'armour' | 'artillery';
-export type Terrain = 'plain' | 'forest' | 'hills' | 'water' | 'river' | 'bridge';
+export type Terrain = 'plain' | 'forest' | 'hills' | 'village' | 'water' | 'river' | 'bridge';
 
 export interface Unit {
   id: number;

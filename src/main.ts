@@ -1,14 +1,15 @@
 import './style.css';
 import { planAction, type AIPlan } from './ai';
-import { MAX_TURNS, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
-import { Game } from './game';
+import { MAX_TURNS, SIDE_NAMES, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
+import { Game, other } from './game';
 import { PRESET_MAPS } from './map';
 import { eq, key } from './hex';
 import { EMPTY_OVERLAY, Renderer, sleep, type Overlay } from './render';
 import type { Hex, Side, Unit } from './types';
 
-const HUMAN: Side = 'blue';
-const AI_SIDE: Side = 'red';
+/** The side the player commands; the AI plays the other. */
+let human: Side = 'allied';
+const aiSide = () => other(human);
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const node = document.getElementById(id);
@@ -30,11 +31,16 @@ function newSeed(): number {
   return Math.floor(Math.random() * 1_000_000) + 1;
 }
 
-/** Start a game on the preset map with id `mapId`, or on a random map when it is empty. */
-function startGame(seed: number, mapId = ''): void {
+/**
+ * Start a game on the preset map with id `mapId` (a random map when it is empty), with the
+ * player commanding `side`.
+ */
+function startGame(seed: number, mapId = '', side: Side = 'allied'): void {
   const preset = PRESET_MAPS.find((m) => m.id === mapId);
   game = new Game(seed, preset);
+  human = side;
   $<HTMLSelectElement>('map-select').value = preset?.id ?? '';
+  $<HTMLSelectElement>('side-select').value = side;
   selected = null;
   hover = null;
   busy = false;
@@ -43,17 +49,24 @@ function startGame(seed: number, mapId = ''): void {
   url.searchParams.set('seed', String(seed));
   if (preset) url.searchParams.set('map', preset.id);
   else url.searchParams.delete('map');
+  url.searchParams.set('side', side);
   history.replaceState(null, '', url);
   renderer.load(game);
   refresh();
-  banner('Your turn');
+  if (game.current === human) banner('Your turn');
+  else void runAI();
+}
+
+/** Start a new game with the map and side chosen in the panel. */
+function startChosenGame(): void {
+  startGame(newSeed(), $<HTMLSelectElement>('map-select').value, $<HTMLSelectElement>('side-select').value as Side);
 }
 
 // ----------------------------------------------------------------- helpers
 
 function overlayState(path: Hex[] = []): Overlay {
-  if (game.winner || game.current !== HUMAN) return EMPTY_OVERLAY;
-  if (!selected || selected.side !== HUMAN) return EMPTY_OVERLAY;
+  if (game.winner || game.current !== human) return EMPTY_OVERLAY;
+  if (!selected || selected.side !== human) return EMPTY_OVERLAY;
   const targets = game.attackTargets(selected).map((t) => ({ hex: t.pos, ...game.forecast(selected!, t) }));
   return {
     selected: selected.pos,
@@ -72,7 +85,7 @@ function refresh(path: Hex[] = []): void {
 }
 
 let bannerTimer = 0;
-function banner(text: string, side: Side = HUMAN): void {
+function banner(text: string, side: Side = human): void {
   const b = $('banner');
   b.textContent = text;
   b.className = `show ${side}`;
@@ -86,19 +99,19 @@ function select(u: Unit | null): void {
 }
 
 function readyUnits(): Unit[] {
-  return game.unitsOf(HUMAN).filter((u) => game.canMove(u) || game.attackTargets(u).length > 0);
+  return game.unitsOf(human).filter((u) => game.canMove(u) || game.attackTargets(u).length > 0);
 }
 
 // ------------------------------------------------------------------ panel
 
 function renderPanel(): void {
-  const mine = game.current === HUMAN;
+  const mine = game.current === human;
   $('turn-label').textContent = `Turn ${game.turn} / ${MAX_TURNS}`;
   const pill = $('side-label');
   pill.textContent = mine ? 'Your move' : 'Enemy move';
   pill.className = `side-pill ${game.current}`;
-  $('forces').textContent = `${game.unitsOf(HUMAN).length} v ${game.unitsOf(AI_SIDE).length}`;
-  $('score').textContent = `${game.score(HUMAN)} v ${game.score(AI_SIDE)}`;
+  $('forces').textContent = `${game.unitsOf(human).length} v ${game.unitsOf(aiSide()).length}`;
+  $('score').textContent = `${game.score(human)} v ${game.score(aiSide())}`;
   ($('end-turn') as HTMLButtonElement).disabled = !mine || busy || !!game.winner;
 
   renderInspect();
@@ -124,7 +137,7 @@ function renderInspect(): void {
     const s = UNIT_SPECS[u.type];
     const status = u.side !== game.current ? 'waiting' : u.attacked ? 'has attacked' : u.mp > 0 ? `${u.mp} move left` : 'no moves left';
     html += `<div class="unit-card ${u.side}">
-      <div class="uc-head"><span class="swatch ${u.side}"></span><b>${s.name}</b><span class="muted">${u.side === HUMAN ? 'yours' : 'enemy'} · ${status}</span></div>
+      <div class="uc-head"><span class="swatch ${u.side}"></span><b>${s.name}</b><span class="muted">${SIDE_NAMES[u.side]} · ${u.side === human ? 'yours' : 'enemy'} · ${status}</span></div>
       <div class="bar-wrap"><div class="bar-fill ${hpFrac(u) <= 0.35 ? 'low' : hpFrac(u) <= 0.7 ? 'mid' : ''}" style="width:${hpFrac(u) * 100}%"></div></div>
       <div class="statgrid">${statRow('Strength', `${u.hp}/${s.maxHp}`)}${statRow('Move', s.attackMove === s.move ? s.move : `${s.attackMove} + attack, or ${s.move}`)}${statRow('Attack', s.attack.join(' / '))}${statRow('Range', rangeOf(u.type))}</div>
       <p class="muted small">${s.blurb}</p></div>`;
@@ -170,9 +183,9 @@ async function execute(plan: AIPlan): Promise<void> {
 
 function checkGameOver(): boolean {
   if (!game.winner) return false;
-  const title = game.winner === 'draw' ? 'A draw' : game.winner === HUMAN ? 'Victory!' : 'Defeat';
+  const title = game.winner === 'draw' ? 'A draw' : game.winner === human ? 'Victory!' : 'Defeat';
   $('overlay-title').textContent = title;
-  $('overlay-title').className = game.winner === 'draw' ? '' : game.winner === HUMAN ? 'win' : 'lose';
+  $('overlay-title').className = game.winner === 'draw' ? '' : game.winner === human ? 'win' : 'lose';
   $('overlay-text').textContent = game.winReason;
   setTimeout(() => ($('overlay').hidden = false), 600);
   return true;
@@ -181,9 +194,9 @@ function checkGameOver(): boolean {
 async function runAI(): Promise<void> {
   busy = true;
   refresh();
-  banner('Enemy turn', AI_SIDE);
+  banner('Enemy turn', aiSide());
   await sleep(700);
-  while (!game.winner && game.current === AI_SIDE) {
+  while (!game.winner && game.current === aiSide()) {
     const plan = planAction(game);
     if (!plan) break;
     await execute(plan);
@@ -201,7 +214,7 @@ async function runAI(): Promise<void> {
 }
 
 async function endTurn(): Promise<void> {
-  if (busy || game.winner || game.current !== HUMAN) return;
+  if (busy || game.winner || game.current !== human) return;
   selected = null;
   game.endTurn();
   refresh();
@@ -212,12 +225,12 @@ async function endTurn(): Promise<void> {
 // ----------------------------------------------------------------- input
 
 async function onHexClick(h: Hex): Promise<void> {
-  if (busy || game.winner || game.current !== HUMAN) return;
+  if (busy || game.winner || game.current !== human) return;
 
   const clicked = game.unitAt(h);
-  if (selected && selected.side === HUMAN) {
+  if (selected && selected.side === human) {
     const u = selected;
-    if (clicked && clicked.side !== HUMAN && game.attackTargets(u).includes(clicked)) {
+    if (clicked && clicked.side !== human && game.attackTargets(u).includes(clicked)) {
       await doAttack(u, clicked);
       selected = null;
       refresh();
@@ -233,7 +246,7 @@ async function onHexClick(h: Hex): Promise<void> {
       return;
     }
   }
-  if (clicked && clicked.side === HUMAN && clicked !== selected) select(clicked);
+  if (clicked && clicked.side === human && clicked !== selected) select(clicked);
   else select(null);
 }
 
@@ -249,7 +262,7 @@ svg.addEventListener('mousemove', (e) => {
   renderer.setHover(h);
   if (busy) return;
   // Preview the route for the selected unit.
-  if (h && selected && selected.side === HUMAN && game.current === HUMAN && !game.winner) {
+  if (h && selected && selected.side === human && game.current === human && !game.winner) {
     const reach = game.reachable(selected);
     if (reach.has(key(h)) && !game.unitAt(h)) {
       refresh(game.pathTo(reach, h));
@@ -268,9 +281,9 @@ svg.addEventListener('mouseleave', () => {
 $('end-turn').addEventListener('click', () => void endTurn());
 $('new-game').addEventListener('click', () => {
   if (busy) return;
-  startGame(newSeed(), $<HTMLSelectElement>('map-select').value);
+  startChosenGame();
 });
-$('overlay-new').addEventListener('click', () => startGame(newSeed(), $<HTMLSelectElement>('map-select').value));
+$('overlay-new').addEventListener('click', startChosenGame);
 
 window.addEventListener('keydown', (e) => {
   if ((e.target instanceof HTMLButtonElement || e.target instanceof HTMLSelectElement) && e.key === ' ') return; // let focused controls keep Space
@@ -279,7 +292,7 @@ window.addEventListener('keydown', (e) => {
   } else if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
     void endTurn();
-  } else if ((e.key === 'n' || e.key === 'N') && !busy && game.current === HUMAN && !game.winner) {
+  } else if ((e.key === 'n' || e.key === 'N') && !busy && game.current === human && !game.winner) {
     const list = readyUnits();
     if (!list.length) return;
     const i = selected ? list.indexOf(selected) : -1;
@@ -290,4 +303,5 @@ window.addEventListener('keydown', (e) => {
 for (const m of PRESET_MAPS) $('map-select').append(new Option(m.name, m.id));
 const params = new URLSearchParams(location.search);
 const seedParam = Number(params.get('seed'));
-startGame(Number.isFinite(seedParam) && seedParam > 0 ? seedParam : newSeed(), params.get('map') ?? '');
+const sideParam = params.get('side') === 'axis' ? 'axis' : 'allied';
+startGame(Number.isFinite(seedParam) && seedParam > 0 ? seedParam : newSeed(), params.get('map') ?? '', sideParam);

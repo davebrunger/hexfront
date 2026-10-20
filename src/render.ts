@@ -42,6 +42,7 @@ interface UnitView {
 const TERRAIN_FILL: Record<Terrain, [number, number, number]> = {
   plain: [88, 40, 62],
   forest: [100, 24, 52],
+  village: [88, 40, 62],
   hills: [38, 34, 62],
   water: [200, 40, 60],
   // River hexes are grass with the river drawn over them.
@@ -123,6 +124,11 @@ export class Renderer {
         spots.forEach(([px, py, s], i) => this.tree(g, px + j(i, 4), py + j(i + 9, 3), s));
         break;
       }
+      case 'village': {
+        const spots: [number, number][] = [[-10, 7], [9, 9], [0, -7]];
+        spots.forEach(([px, py], i) => this.house(g, px + j(i, 4), py + j(i + 9, 3)));
+        break;
+      }
       case 'hills':
         this.mound(g, -9 + j(1, 4), 6 + j(2, 3), 14);
         this.mound(g, 10 + j(3, 4), 3 + j(4, 3), 11);
@@ -189,6 +195,12 @@ export class Renderer {
     el('rect', { x: x - 1, y: y + 2 * s, width: 2, height: 4 * s, class: 'trunk' }, g);
     el('polygon', { points: `${x},${y - 12 * s} ${x - 7 * s},${y} ${x + 7 * s},${y}`, class: 'tree' }, g);
     el('polygon', { points: `${x},${y - 7 * s} ${x - 8 * s},${y + 5 * s} ${x + 8 * s},${y + 5 * s}`, class: 'tree tree-b' }, g);
+  }
+
+  private house(g: SVGElement, x: number, y: number): void {
+    el('rect', { x: x - 7, y: y - 4, width: 14, height: 9, class: 'house-wall' }, g);
+    el('polygon', { points: `${x - 9},${y - 3} ${x},${y - 11} ${x + 9},${y - 3}`, class: 'house-roof' }, g);
+    el('rect', { x: x - 1.5, y: y, width: 3, height: 5, class: 'house-door' }, g);
   }
 
   private mound(g: SVGElement, x: number, y: number, w: number): void {

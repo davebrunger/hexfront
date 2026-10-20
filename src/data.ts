@@ -1,6 +1,8 @@
-import type { Terrain, UnitType } from './types';
+import type { Side, Terrain, UnitType } from './types';
 
 export const MAX_TURNS = 30;
+
+export const SIDE_NAMES: Record<Side, string> = { allied: 'Allied', axis: 'Axis' };
 
 export interface UnitSpec {
   name: string;
@@ -82,6 +84,7 @@ export interface TerrainInfo {
 export const TERRAIN: Record<Terrain, TerrainInfo> = {
   plain: { name: 'Open ground', diceLost: 0, passable: true, stopsMove: false },
   forest: { name: 'Forest', diceLost: 1, passable: true, stopsMove: true },
+  village: { name: 'Village', diceLost: 1, passable: true, stopsMove: true },
   hills: { name: 'Hills', diceLost: 1, passable: true, stopsMove: true },
   water: {
     name: 'Lake',

@@ -137,6 +137,21 @@ function build(seed: number): GameMap {
       map.tiles.set(key(h), 'plain');
     }
   }
+
+  // A couple of villages on open ground between the armies, apart from each other.
+  for (let i = 0; i < 2; i++) {
+    const spots = map.hexes.filter(
+      (h) =>
+        h.r >= DEPLOY_ROWS &&
+        h.r < MAP_HEIGHT - DEPLOY_ROWS &&
+        map.terrain(h) === 'plain' &&
+        neighbors(h).every((n) => map.terrain(n) !== 'village'),
+    );
+    if (!spots.length) break;
+    const h = spots[Math.floor(rng() * spots.length)];
+    map.tiles.set(key(h), 'village');
+    map.tiles.set(key(map.mirror(h)), 'village');
+  }
   return map;
 }
 
@@ -173,19 +188,20 @@ export interface Deployment {
   pos: Hex;
 }
 
-/** Player (blue) units are i/a/r; the AI's (red) are the next letter along. */
+/** Allied units are i/a/r; Axis units are the next letter along. */
 export const UNIT_LETTERS: Record<string, [Side, UnitType]> = {
-  i: ['blue', 'infantry'],
-  j: ['red', 'infantry'],
-  a: ['blue', 'armour'],
-  b: ['red', 'armour'],
-  r: ['blue', 'artillery'],
-  s: ['red', 'artillery'],
+  i: ['allied', 'infantry'],
+  j: ['axis', 'infantry'],
+  a: ['allied', 'armour'],
+  b: ['axis', 'armour'],
+  r: ['allied', 'artillery'],
+  s: ['axis', 'artillery'],
 };
 
 export const MAP_LETTERS: Record<string, Terrain> = {
   '.': 'plain',
   f: 'forest',
+  v: 'village',
   h: 'hills',
   l: 'water',
   r: 'river',

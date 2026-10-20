@@ -4,7 +4,7 @@ import { planAction } from '../src/ai';
 import { DIE_FACES, MAX_TURNS, TERRAIN, attackAt, dieHits, isRiver, rangeOf } from '../src/data';
 import { Game } from '../src/game';
 import { distance, eq, fromOffset, key, neighbors } from '../src/hex';
-import { MAP_HEIGHT, MAP_WIDTH, PRESET_MAPS, parseMap, parseUnits, rowWidth } from '../src/map';
+import { MAP_HEIGHT, MAP_WIDTH, MAP_LETTERS, PRESET_MAPS, parseMap, parseUnits, rowWidth } from '../src/map';
 
 /** Execute an AI plan without any animation (mirrors what the UI controller does). */
 function runPlan(game: Game): boolean {
@@ -78,14 +78,14 @@ describe('map generation', () => {
     for (const def of PRESET_MAPS) {
       const g = new Game(1, def);
       assert.equal(g.map.hexes.length, 5 * 13 + 4 * 12);
-      assert.ok(g.unitsOf('blue').length > 0 && g.unitsOf('red').length > 0);
+      assert.ok(g.unitsOf('allied').length > 0 && g.unitsOf('axis').length > 0);
     }
     const pegasus = new Game(1, PRESET_MAPS.find((m) => m.id === 'pegasus-bridge'));
-    assert.equal(pegasus.unitsOf('blue').length, 8);
-    assert.equal(pegasus.unitsOf('red').length, 6);
+    assert.equal(pegasus.unitsOf('allied').length, 8);
+    assert.equal(pegasus.unitsOf('axis').length, 6);
     assert.ok(pegasus.units.every((u) => u.type === 'infantry'));
-    assert.equal(pegasus.unitAt(fromOffset(0, 0))?.side, 'red');
-    assert.equal(pegasus.unitAt(fromOffset(8, 8))?.side, 'blue');
+    assert.equal(pegasus.unitAt(fromOffset(0, 0))?.side, 'axis');
+    assert.equal(pegasus.unitAt(fromOffset(8, 8))?.side, 'allied');
     assert.equal(pegasus.map.terrain(fromOffset(3, 2)), 'bridge');
     assert.equal(pegasus.map.terrain(fromOffset(5, 5)), 'water');
     assert.equal(pegasus.map.terrain(fromOffset(0, 8)), 'river');
@@ -112,16 +112,16 @@ describe('map generation', () => {
 });
 
 describe('starting position', () => {
-  it('starts blue at the bottom and red at the top', () => {
+  it('starts the Allies at the bottom and the Axis at the top', () => {
     const g = new Game(1);
-    for (const u of g.unitsOf('blue')) assert.ok(u.pos.r >= MAP_HEIGHT - 2);
-    for (const u of g.unitsOf('red')) assert.ok(u.pos.r <= 1);
+    for (const u of g.unitsOf('allied')) assert.ok(u.pos.r >= MAP_HEIGHT - 2);
+    for (const u of g.unitsOf('axis')) assert.ok(u.pos.r <= 1);
   });
   it('places 8 units per side on distinct, passable hexes', () => {
     for (const seed of [1, 5, 8, 21, 314]) {
       const g = new Game(seed);
-      assert.equal(g.unitsOf('blue').length, 8);
-      assert.equal(g.unitsOf('red').length, 8);
+      assert.equal(g.unitsOf('allied').length, 8);
+      assert.equal(g.unitsOf('axis').length, 8);
       const keys = new Set(g.units.map((u) => key(u.pos)));
       assert.equal(keys.size, 16);
       for (const u of g.units) assert.ok(TERRAIN[g.map.terrain(u.pos)!].passable);
@@ -132,7 +132,7 @@ describe('starting position', () => {
 describe('movement', () => {
   it('respects movement points and cannot stop on units', () => {
     const g = new Game(7);
-    const u = g.unitsOf('blue')[0];
+    const u = g.unitsOf('allied')[0];
     for (const r of g.moveTargets(u)) {
       assert.ok(r.cost <= u.mp);
       assert.equal(g.unitAt(r.hex), undefined);
@@ -140,7 +140,7 @@ describe('movement', () => {
   });
   it('entering forest or hills ends movement for the turn', () => {
     const g = new Game(7);
-    const arm = g.unitsOf('blue').find((u) => u.type === 'armour')!;
+    const arm = g.unitsOf('allied').find((u) => u.type === 'armour')!;
     g.units = g.units.filter((u) => u === arm);
     const line = [1, 2, 3].map((i) => ({ q: arm.pos.q + i, r: arm.pos.r }));
     for (const h of line) g.map.tiles.set(key(h), 'plain');
@@ -153,10 +153,14 @@ describe('movement', () => {
     assert.equal(g.spacesMoved(arm), 1);
     assert.equal(g.canMove(arm), false);
   });
+  it('villages play like forest', () => {
+    assert.deepEqual({ ...TERRAIN.village, name: '' }, { ...TERRAIN.forest, name: '' });
+    assert.equal(MAP_LETTERS.v, 'village');
+  });
   it('enemy zone of control stops movement', () => {
     const g = new Game(7);
-    const mover = g.unitsOf('blue').find((u) => u.type === 'armour')!;
-    const enemy = g.unitsOf('red')[0];
+    const mover = g.unitsOf('allied').find((u) => u.type === 'armour')!;
+    const enemy = g.unitsOf('axis')[0];
     // Drop the enemy two hexes away from the mover on open ground.
     const target = { q: mover.pos.q + 2, r: mover.pos.r };
     g.map.tiles.set(key(target), 'plain');
@@ -167,7 +171,7 @@ describe('movement', () => {
       if (distance(r.hex, enemy.pos) === 1 && r.prev !== null) {
         // No reachable hex may be *beyond* a ZOC hex: its predecessor must not itself be in ZOC.
         const prev = [...reach.values()].find((x) => key(x.hex) === r.prev)!;
-        assert.ok(eq(prev.hex, mover.pos) || !g.inEnemyZoc('blue', prev.hex));
+        assert.ok(eq(prev.hex, mover.pos) || !g.inEnemyZoc('allied', prev.hex));
       }
     }
   });
@@ -176,8 +180,8 @@ describe('movement', () => {
 describe('combat', () => {
   it('damage equals the dice that hit, with no return fire', () => {
     const g = new Game(3);
-    const art = g.unitsOf('blue').find((u) => u.type === 'artillery')!;
-    const inf = g.unitsOf('red').find((u) => u.type === 'infantry')!;
+    const art = g.unitsOf('allied').find((u) => u.type === 'artillery')!;
+    const inf = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
     inf.pos = { q: art.pos.q + 1, r: art.pos.r }; // adjacent, well within infantry range
     g.map.tiles.set(key(inf.pos), 'plain');
     const before = inf.hp;
@@ -199,8 +203,8 @@ describe('combat', () => {
     assert.deepEqual([1, 2, 3, 4].map((d) => attackAt('infantry', d)), [3, 2, 1, 0]);
     assert.equal(rangeOf('artillery'), 6);
     const g = new Game(3);
-    const art = g.unitsOf('blue').find((u) => u.type === 'artillery')!;
-    const inf = g.unitsOf('red').find((u) => u.type === 'infantry')!;
+    const art = g.unitsOf('allied').find((u) => u.type === 'artillery')!;
+    const inf = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
     inf.pos = { q: art.pos.q + 1, r: art.pos.r };
     g.map.tiles.set(key(inf.pos), 'plain');
     const near = g.forecast(art, inf);
@@ -208,7 +212,7 @@ describe('combat', () => {
     assert.equal(near.dealt, 1.5);
     assert.equal(g.forecast(art, { ...inf, pos: { q: art.pos.q + 5, r: art.pos.r } }).dice, 1);
     // Terrain costs non-artillery attackers a die.
-    const mine = g.unitsOf('blue').find((u) => u.type === 'infantry')!;
+    const mine = g.unitsOf('allied').find((u) => u.type === 'infantry')!;
     inf.pos = { q: mine.pos.q + 1, r: mine.pos.r };
     g.map.tiles.set(key(inf.pos), 'hills');
     assert.equal(g.forecast(mine, inf).dice, 2);
@@ -219,8 +223,8 @@ describe('combat', () => {
   });
   it('limits how far each unit can move and still attack', () => {
     const g = new Game(3);
-    const pick = (type: string) => g.unitsOf('blue').find((u) => u.type === type)!;
-    const enemy = g.unitsOf('red')[0];
+    const pick = (type: string) => g.unitsOf('allied').find((u) => u.type === type)!;
+    const enemy = g.unitsOf('axis')[0];
     const near = (u: { pos: { q: number; r: number } }) => {
       enemy.pos = { q: u.pos.q + 1, r: u.pos.r };
       g.map.tiles.set(key(enemy.pos), 'plain');
@@ -239,16 +243,16 @@ describe('combat', () => {
   });
   it('artillery ignores terrain dice penalties', () => {
     const g = new Game(3);
-    const art = g.unitsOf('blue').find((u) => u.type === 'artillery')!;
-    const inf = g.unitsOf('red').find((u) => u.type === 'infantry')!;
+    const art = g.unitsOf('allied').find((u) => u.type === 'artillery')!;
+    const inf = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
     inf.pos = { q: art.pos.q + 1, r: art.pos.r };
     g.map.tiles.set(key(inf.pos), 'hills');
     assert.equal(g.forecast(art, inf).dice, 3);
   });
   it('forecasts the chance to destroy a target', () => {
     const g = new Game(3);
-    const a = g.unitsOf('blue').find((u) => u.type === 'armour')!;
-    const d = g.unitsOf('red').find((u) => u.type === 'infantry')!;
+    const a = g.unitsOf('allied').find((u) => u.type === 'armour')!;
+    const d = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
     d.pos = { q: a.pos.q + 1, r: a.pos.r };
     g.map.tiles.set(key(d.pos), 'plain');
     d.hp = 2;
@@ -262,7 +266,7 @@ describe('combat', () => {
 describe('turns and victory', () => {
   it('damaged units do not heal', () => {
     const g = new Game(11);
-    const u = g.unitsOf('blue')[0];
+    const u = g.unitsOf('allied')[0];
     u.hp = 1;
     g.endTurn();
     g.endTurn();
@@ -270,9 +274,9 @@ describe('turns and victory', () => {
   });
   it('destroying the last enemy unit wins immediately', () => {
     const g = new Game(11);
-    const art = g.unitsOf('blue').find((u) => u.type === 'artillery')!;
-    const last = g.unitsOf('red')[0];
-    g.units = g.units.filter((u) => u.side === 'blue' || u === last);
+    const art = g.unitsOf('allied').find((u) => u.type === 'artillery')!;
+    const last = g.unitsOf('axis')[0];
+    g.units = g.units.filter((u) => u.side === 'allied' || u === last);
     last.pos = { q: art.pos.q + 2, r: art.pos.r };
     g.map.tiles.set(key(last.pos), 'plain');
     last.hp = 1;
@@ -281,7 +285,7 @@ describe('turns and victory', () => {
       art.attacked = false;
       g.attack(art, last);
     }
-    assert.equal(g.winner, 'blue');
+    assert.equal(g.winner, 'allied');
   });
 });
 

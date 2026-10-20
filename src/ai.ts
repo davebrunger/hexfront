@@ -88,7 +88,7 @@ export function planAction(game: Game): AIPlan | null {
     // Forest and hills cost most attackers a die, so hold them.
     score += TERRAIN[game.map.terrain(hex)!].diceLost * TERRAIN_WEIGHT * caution;
 
-    // Danger: expected damage from enemy attacks next turn (forest and hills reduce it).
+    // Danger: expected damage from enemy attacks next turn (forest, hills and villages reduce it).
     const fragile = 1 + (1 - hpFrac(unit)) * 1.25 + (unit.type === 'artillery' ? 0.5 : 0);
     score -= danger(game, unit, hex, enemies) * DANGER_WEIGHT * fragile * caution;
 

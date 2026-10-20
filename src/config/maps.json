@@ -3,11 +3,11 @@
     "id": "pegasus-bridge",
     "name": "Pegasus Bridge",
     "rows": [
-      ". . . . r f f . . . . . .",
+      "v v . . r f f . . . . . .",
       " . . . r . f . . . . . .",
       ". . . b . . . . . . . . r",
       " . . r . . . . . . f . r",
-      ". . r . . f . . . . . r .",
+      "v . r . . f . . . . . r .",
       " . r . . . l l . . . b .",
       ". r . . . l l . . . r . .",
       " r . . . . . . . f r f .",
