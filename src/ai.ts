@@ -12,9 +12,9 @@ export interface AIPlan {
 // Scoring weights. Tuned to play aggressively rather than optimally: a cautious AI wins more
 // often on points but turns most games into a stand-off that runs to the turn limit.
 const ATTACK_WEIGHT = 4;
-const CLOSE_WEIGHT = 2;
+const CLOSE_WEIGHT = 1.5;
 const TERRAIN_WEIGHT = 2;
-const DANGER_WEIGHT = 1;
+const DANGER_WEIGHT = 2;
 /** Caution falls by this much each turn, and per point of score the side is behind. */
 const CAUTION_PER_TURN = 0.03;
 const CAUTION_PER_POINT_BEHIND = 0.1;

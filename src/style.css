@@ -76,6 +76,11 @@ button {
 button:hover:not(:disabled) { background: #2d3743; border-color: #475567; }
 button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
+.new-game { display: grid; gap: 6px; }
+.new-game select {
+  font: 500 13px var(--sans); color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px;
+}
+.new-game select:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 button.primary { width: 100%; background: linear-gradient(#e3c06c, #c39a38); color: #2a1f08; border-color: #8f6f1f; font-size: 14px; }
 button.primary:hover:not(:disabled) { background: linear-gradient(#ebca79, #cfa43f); }
@@ -124,13 +129,17 @@ button.primary kbd { border-color: #2a1f0855; background: #2a1f0816; }
 .tile { stroke: none; }
 .grid { fill: none; stroke: rgba(60, 46, 24, 0.55); stroke-width: 1; pointer-events: none; }
 .grain { mix-blend-mode: multiply; opacity: 0.55; pointer-events: none; }
-.tuft { stroke: #8a8a4c; stroke-width: 1; fill: none; stroke-linecap: round; opacity: 0.8; }
+.tuft { stroke: #4f7a34; stroke-width: 1; fill: none; stroke-linecap: round; opacity: 0.8; }
 .trunk { fill: #5b3d22; }
 .tree { fill: #2f5d36; stroke: #1b3a21; stroke-width: 0.7; }
 .tree-b { fill: #3a7040; }
 .mound { fill: #a98652; stroke: #6e5330; stroke-width: 1; }
 .mound-hi { fill: none; stroke: #d9c08c; stroke-width: 1.4; stroke-linecap: round; }
 .wave { fill: none; stroke: #e6f3f8; stroke-width: 1.5; stroke-linecap: round; opacity: 0.7; }
+.river-bank { fill: none; stroke: #4f6f4a; stroke-width: 15; stroke-linejoin: round; }
+.river { fill: none; stroke: hsl(200, 45%, 55%); stroke-width: 11; stroke-linejoin: round; }
+.bridge-deck { fill: #9a774a; stroke: #5b4127; stroke-width: 1; }
+.bridge-rail { stroke: #3e2c18; stroke-width: 2.2; stroke-linecap: round; }
 
 .layer-terrain, .layer-highlight, .layer-units, .layer-effects { pointer-events: none; }
 

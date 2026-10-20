@@ -40,14 +40,20 @@
               <li><b>Select</b> one of your blue units. Bright white hexes show where it can move and still attack, faint dashed ones where it can move but not attack; red-ringed enemies can be attacked.</li>
               <li>Each unit can <b>move, then attack once</b> per turn. Attacking ends its move. Infantry can move 1 space and attack, or 2 without attacking; Armour can move up to 3 and attack; Artillery can attack, or move 1.</li>
               <li><b>Attacking</b> rolls one die per point of attack, which falls off with range. Each grenade, or symbol matching the target's type, does 1 damage. Targets never fire back.</li>
-              <li><b>Terrain:</b> every hex costs 1 space to enter, entering forest or hills ends your move, and lakes are impassable. Attacks on units in forest or on hills roll one die fewer, except from artillery.</li>
+              <li><b>Terrain:</b> every hex costs 1 space to enter, entering forest or hills ends your move, and lakes and rivers are impassable except at bridges. Attacks on units in forest or on hills roll one die fewer, except from artillery.</li>
               <li><b>Zones of control:</b> entering a hex next to an enemy ends your move.</li>
               <li>The number above a target shows dice rolled, expected damage and chance to destroy it.</li>
               <li><b>Win</b> by destroying every enemy unit, or by having more strength left after turn 30.</li>
               <li><kbd>Esc</kbd> cancels, <kbd>N</kbd> selects the next ready unit, <kbd>Space</kbd> ends the turn.</li>
             </ul>
           </details>
-          <button id="new-game" type="button">New game</button>
+          <div class="new-game">
+            <label class="k" for="map-select">Map</label>
+            <select id="map-select">
+              <option value="">Random map</option>
+            </select>
+            <button id="new-game" type="button">New game</button>
+          </div>
         </aside>
       </main>
       <div id="overlay" hidden>

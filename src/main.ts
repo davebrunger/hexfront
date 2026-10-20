@@ -2,6 +2,7 @@ import './style.css';
 import { planAction, type AIPlan } from './ai';
 import { MAX_TURNS, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
 import { Game } from './game';
+import { PRESET_MAPS } from './map';
 import { eq, key } from './hex';
 import { EMPTY_OVERLAY, Renderer, sleep, type Overlay } from './render';
 import type { Hex, Side, Unit } from './types';
@@ -29,14 +30,19 @@ function newSeed(): number {
   return Math.floor(Math.random() * 1_000_000) + 1;
 }
 
-function startGame(seed: number): void {
-  game = new Game(seed);
+/** Start a game on the preset map with id `mapId`, or on a random map when it is empty. */
+function startGame(seed: number, mapId = ''): void {
+  const preset = PRESET_MAPS.find((m) => m.id === mapId);
+  game = new Game(seed, preset);
+  $<HTMLSelectElement>('map-select').value = preset?.id ?? '';
   selected = null;
   hover = null;
   busy = false;
   $('overlay').hidden = true;
   const url = new URL(location.href);
   url.searchParams.set('seed', String(seed));
+  if (preset) url.searchParams.set('map', preset.id);
+  else url.searchParams.delete('map');
   history.replaceState(null, '', url);
   renderer.load(game);
   refresh();
@@ -262,12 +268,12 @@ svg.addEventListener('mouseleave', () => {
 $('end-turn').addEventListener('click', () => void endTurn());
 $('new-game').addEventListener('click', () => {
   if (busy) return;
-  startGame(newSeed());
+  startGame(newSeed(), $<HTMLSelectElement>('map-select').value);
 });
-$('overlay-new').addEventListener('click', () => startGame(newSeed()));
+$('overlay-new').addEventListener('click', () => startGame(newSeed(), $<HTMLSelectElement>('map-select').value));
 
 window.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLButtonElement && e.key === ' ') return; // let focused buttons keep Space
+  if ((e.target instanceof HTMLButtonElement || e.target instanceof HTMLSelectElement) && e.key === ' ') return; // let focused controls keep Space
   if (e.key === 'Escape') {
     if (!busy) select(null);
   } else if (e.key === ' ' || e.key === 'Enter') {
@@ -281,5 +287,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-const seedParam = Number(new URLSearchParams(location.search).get('seed'));
-startGame(Number.isFinite(seedParam) && seedParam > 0 ? seedParam : newSeed());
+for (const m of PRESET_MAPS) $('map-select').append(new Option(m.name, m.id));
+const params = new URLSearchParams(location.search);
+const seedParam = Number(params.get('seed'));
+startGame(Number.isFinite(seedParam) && seedParam > 0 ? seedParam : newSeed(), params.get('map') ?? '');

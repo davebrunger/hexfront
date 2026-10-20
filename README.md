@@ -15,12 +15,33 @@ npm test           # unit tests + AI-vs-AI simulations
 
 Add `?seed=1234` to the URL to replay a specific map.
 
+### Preset maps
+
+Pick a map from the **Map** list before pressing **New game**, or leave it on *Random map*. Preset maps live in [`src/config/maps.json`](src/config/maps.json). Each has an `id` (used in the URL as `?map=`), a `name`, and 9 `rows` of terrain letters separated by spaces, top row first. Rows alternate 13 and 12 hexes; start the 12-hex rows with a space so they line up.
+
+| Letter | Terrain |
+|---|---|
+| `.` | Open ground |
+| `f` | Forest |
+| `h` | Hills |
+| `l` | Lake |
+| `r` | River |
+| `b` | Bridge |
+
+Add an optional `units` list, laid out the same way, to set the starting positions (`.` for an empty hex). Without it both armies use the standard starting positions. Units can't start on lakes or rivers.
+
+| Letter | Unit |
+|---|---|
+| `i` / `j` | Player / AI infantry |
+| `a` / `b` | Player / AI armour |
+| `r` / `s` | Player / AI artillery |
+
 ## Rules in brief
 
 - Win by **wiping out the enemy**, or by having more strength left at the end of turn 30.
 - Each unit may **move, then attack once**. Attacking ends its move. Infantry can move 1 space and attack, or 2 without attacking; Armour can move up to 3 and attack; Artillery can attack, or move 1.
 - **Attacking** rolls one die per point of attack, which falls off with range. Dice faces are Infantry, Infantry, Armour, Grenade, Flag, Star; each grenade or face matching the target's type does 1 damage. There is no return fire.
-- **Terrain:** every hex costs 1 space to enter, entering forest or hills ends your move, and lakes are impassable. Attacks on units in forest or on hills roll one die fewer, except from artillery.
+- **Terrain:** every hex costs 1 space to enter, entering forest or hills ends your move, and lakes and rivers are impassable except at bridges. Attacks on units in forest or on hills roll one die fewer, except from artillery.
 - **Zones of control:** entering a hex next to an enemy ends your move.
 
 Keys: `Esc` cancel · `N` next ready unit · `Space` end turn.

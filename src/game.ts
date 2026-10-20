@@ -1,6 +1,6 @@
 import { DIE_FACES, DIE_LABELS, MAX_TURNS, TERRAIN, UNIT_SPECS, attackAt, dieHits, hitChance, rangeOf, type DieFace } from './data';
 import { distance, eq, fromOffset, key, neighbors } from './hex';
-import { generateMap, mulberry32, type GameMap } from './map';
+import { generateMap, mulberry32, parseMap, parseUnits, type Deployment, type GameMap, type MapDef } from './map';
 import type { Hex, LogEntry, Side, Unit, UnitType } from './types';
 
 export interface Reach {
@@ -28,16 +28,17 @@ export interface CombatResult {
 
 export const other = (s: Side): Side => (s === 'blue' ? 'red' : 'blue');
 
-// Starting units for blue in offset coords; red gets the point-mirrored positions.
+// Standard starting units for blue (the player, at the bottom) in offset coords (col, row);
+// red (at the top) gets the point-mirrored positions. Preset maps may set their own.
 const START_UNITS: [UnitType, number, number][] = [
-  ['infantry', 1, 4],
-  ['infantry', 3, 3],
-  ['infantry', 3, 5],
-  ['infantry', 2, 7],
-  ['armour', 2, 3],
-  ['armour', 2, 5],
-  ['artillery', 0, 4],
-  ['artillery', 1, 6],
+  ['infantry', 1, 7],
+  ['infantry', 4, 7],
+  ['infantry', 7, 7],
+  ['infantry', 10, 7],
+  ['armour', 2, 8],
+  ['armour', 10, 8],
+  ['artillery', 5, 8],
+  ['artillery', 7, 8],
 ];
 
 /** Chance of at least `k` hits from `n` dice that each hit with chance `p`. */
@@ -62,13 +63,26 @@ export class Game {
   private nextId = 1;
   private readonly rng: () => number;
 
-  constructor(readonly seed: number) {
-    this.map = generateMap(seed);
+  /** Plays on `mapDef` if given, otherwise on a map generated from `seed` (which also drives the dice). */
+  constructor(
+    readonly seed: number,
+    mapDef?: MapDef,
+  ) {
+    this.map = mapDef ? parseMap(mapDef) : generateMap(seed);
     this.rng = mulberry32(seed ^ 0x9e3779b9);
-    for (const [type, col, row] of START_UNITS) {
-      const pos = fromOffset(col, row);
-      this.spawn('blue', type, pos);
-      this.spawn('red', type, this.map.mirror(pos));
+    const units: Deployment[] =
+      (mapDef && parseUnits(mapDef)) ??
+      START_UNITS.flatMap(([type, col, row]) => [
+        { side: 'blue' as const, type, pos: fromOffset(col, row) },
+        { side: 'red' as const, type, pos: this.map.mirror(fromOffset(col, row)) },
+      ]);
+    for (const { side, type, pos } of units) {
+      const t = this.map.terrain(pos);
+      if (!t || !TERRAIN[t].passable) throw new Error(`Map has impassable terrain at a ${side} starting hex`);
+      this.spawn(side, type, pos);
+    }
+    for (const side of ['blue', 'red'] as const) {
+      if (!this.unitsOf(side).length) throw new Error(`Map has no ${side} units`);
     }
     this.startTurn();
     this.addLog(null, 'Orders received. The campaign begins.');

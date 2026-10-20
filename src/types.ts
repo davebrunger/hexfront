@@ -6,7 +6,7 @@ export interface Hex {
 
 export type Side = 'blue' | 'red';
 export type UnitType = 'infantry' | 'armour' | 'artillery';
-export type Terrain = 'plain' | 'forest' | 'hills' | 'water';
+export type Terrain = 'plain' | 'forest' | 'hills' | 'water' | 'river' | 'bridge';
 
 export interface Unit {
   id: number;

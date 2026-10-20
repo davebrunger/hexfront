@@ -1,9 +1,14 @@
+import presetMaps from './config/maps.json';
+import { TERRAIN, isRiver } from './data';
 import { distance, fromOffset, key, neighbors, toOffsetCol } from './hex';
-import type { Hex, Terrain } from './types';
+import type { Hex, Side, Terrain, UnitType } from './types';
 
-export const MAP_WIDTH = 16;
-/** Must be even: that is what makes a point-reflected map line up with itself. */
-export const MAP_HEIGHT = 10;
+/** Hexes in the even (long) rows; odd rows are offset half a hex and hold one fewer. */
+export const MAP_WIDTH = 13;
+/** Must be odd, so the top and bottom rows are both long rows and mirror onto each other. */
+export const MAP_HEIGHT = 9;
+
+export const rowWidth = (row: number) => (row % 2 === 0 ? MAP_WIDTH : MAP_WIDTH - 1);
 
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -35,29 +40,59 @@ export class GameMap {
 
   /** Point reflection through the centre of the board (used for a fair, symmetric map). */
   mirror(h: Hex): Hex {
-    return { q: this.width - this.height / 2 - h.q, r: this.height - 1 - h.r };
+    return fromOffset(rowWidth(h.r) - 1 - toOffsetCol(h), this.height - 1 - h.r);
   }
 }
 
-/** Centre of blue's deployment area in offset coordinates (col,row); red's is the mirror image. */
-export const DEPLOY_CENTRE: [number, number] = [1, 4];
+/** Rows at each end of the board where the armies deploy. */
+const DEPLOY_ROWS = 2;
+
+/** A random shortest path from `a` to `b` (inclusive), staying on the map. */
+function wander(map: GameMap, a: Hex, b: Hex, rng: () => number): Hex[] {
+  const path = [a];
+  let cur = a;
+  while (distance(cur, b) > 0) {
+    const steps = neighbors(cur).filter((n) => map.has(n) && distance(n, b) === distance(cur, b) - 1);
+    cur = steps[Math.floor(rng() * steps.length)];
+    path.push(cur);
+  }
+  return path;
+}
+
+/**
+ * A river from the left edge to the right edge, passing through the centre hex so that it is its
+ * own mirror image. Returns the half from the left edge up to (and including) the centre, or null
+ * if no clean course was found.
+ */
+function riverCourse(map: GameMap, rng: () => number): Hex[] | null {
+  const centre = fromOffset((MAP_WIDTH - 1) / 2, (MAP_HEIGHT - 1) / 2);
+  const between = (lo: number, hi: number) => lo + Math.floor(rng() * (hi - lo + 1));
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const start = fromOffset(0, between(DEPLOY_ROWS, MAP_HEIGHT - DEPLOY_ROWS - 1));
+    const bend = fromOffset(between(2, 4), between(DEPLOY_ROWS + 1, MAP_HEIGHT - DEPLOY_ROWS - 2));
+    const half = [...wander(map, start, bend, rng), ...wander(map, bend, centre, rng).slice(1)];
+    const full = [...half, ...half.slice(0, -1).reverse().map((h) => map.mirror(h))];
+    // A clean river never doubles back or touches itself except between consecutive hexes.
+    const clean = full.every((h, i) => full.every((o, j) => Math.abs(i - j) <= 1 || distance(h, o) > 1));
+    if (clean) return half;
+  }
+  return null;
+}
 
 function build(seed: number): GameMap {
   const rng = mulberry32(seed);
   const map = new GameMap(MAP_WIDTH, MAP_HEIGHT);
   for (let row = 0; row < MAP_HEIGHT; row++) {
-    for (let col = 0; col < MAP_WIDTH; col++) {
+    for (let col = 0; col < rowWidth(row); col++) {
       const h = fromOffset(col, row);
       map.tiles.set(key(h), 'plain');
       map.hexes.push(h);
     }
   }
 
-  const blob = (t: Terrain, radius: number, density: number, minCol: number, maxCol: number) => {
-    const candidates = map.hexes.filter((h) => {
-      const c = toOffsetCol(h);
-      return c >= minCol && c <= maxCol;
-    });
+  const blob = (t: Terrain, radius: number, density: number, minRow: number, maxRow: number, avoid = (_h: Hex) => false) => {
+    const candidates = map.hexes.filter((h) => h.r >= minRow && h.r <= maxRow && !avoid(h));
+    if (!candidates.length) return;
     const centre = candidates[Math.floor(rng() * candidates.length)];
     for (const h of map.hexes) {
       if (distance(centre, h) <= radius && rng() < density) {
@@ -67,15 +102,38 @@ function build(seed: number): GameMap {
     }
   };
 
-  for (let i = 0; i < 6; i++) blob('hills', 1 + Math.floor(rng() * 2), 0.85, 0, MAP_WIDTH - 1);
-  for (let i = 0; i < 5; i++) blob('forest', 1 + Math.floor(rng() * 2), 0.85, 0, MAP_WIDTH - 1);
-  for (let i = 0; i < 3; i++) blob('water', 1, 0.9, 4, MAP_WIDTH - 5);
+  // Every blob is mirrored, so these counts are doubled on the board.
+  for (let i = 0; i < 3; i++) blob('hills', 1, 0.7, 0, MAP_HEIGHT - 1);
+  for (let i = 0; i < 3; i++) blob('forest', 1, 0.7, 0, MAP_HEIGHT - 1);
 
-  // Keep the starting areas free of lakes.
-  const deployB = fromOffset(DEPLOY_CENTRE[0], DEPLOY_CENTRE[1]);
-  const deployR = map.mirror(deployB);
+  // A river across the middle, with one or two pairs of bridges spaced along it.
+  const river = riverCourse(map, rng);
+  if (river) {
+    for (const h of river) {
+      map.tiles.set(key(h), 'river');
+      map.tiles.set(key(map.mirror(h)), 'river');
+    }
+    const spots = river.slice(1, -1).map((_, i) => i + 1);
+    const bridges: number[] = [];
+    const wanted = 1 + Math.floor(rng() * 2);
+    while (bridges.length < wanted && spots.length) {
+      const i = spots.splice(Math.floor(rng() * spots.length), 1)[0];
+      if (bridges.every((b) => Math.abs(b - i) >= 3)) bridges.push(i);
+    }
+    for (const i of bridges) {
+      map.tiles.set(key(river[i]), 'bridge');
+      map.tiles.set(key(map.mirror(river[i])), 'bridge');
+    }
+  }
+
+  // Lakes keep at least one hex clear of the river.
+  const riverHexes = map.hexes.filter((h) => isRiver(map.terrain(h)));
+  const nearRiver = (h: Hex) => riverHexes.some((r) => distance(r, h) < 3);
+  blob('water', 1, 0.6, DEPLOY_ROWS, MAP_HEIGHT - DEPLOY_ROWS - 1, nearRiver);
+
+  // Keep the deployment rows free of lakes.
   for (const h of map.hexes) {
-    if (map.terrain(h) === 'water' && (distance(h, deployB) <= 4 || distance(h, deployR) <= 4)) {
+    if (map.terrain(h) === 'water' && (h.r < DEPLOY_ROWS || h.r >= MAP_HEIGHT - DEPLOY_ROWS)) {
       map.tiles.set(key(h), 'plain');
     }
   }
@@ -83,20 +141,93 @@ function build(seed: number): GameMap {
 }
 
 function isConnected(map: GameMap): boolean {
-  const passable = map.hexes.filter((h) => map.terrain(h) !== 'water');
-  const start = fromOffset(DEPLOY_CENTRE[0], DEPLOY_CENTRE[1]);
+  const passable = map.hexes.filter((h) => TERRAIN[map.terrain(h)!].passable);
+  const start = fromOffset(0, MAP_HEIGHT - 1);
   const seen = new Set<string>([key(start)]);
   const queue = [start];
   while (queue.length) {
     const cur = queue.pop()!;
     for (const n of neighbors(cur)) {
       const t = map.terrain(n);
-      if (!t || t === 'water' || seen.has(key(n))) continue;
+      if (!t || !TERRAIN[t].passable || seen.has(key(n))) continue;
       seen.add(key(n));
       queue.push(n);
     }
   }
   return seen.size === passable.length;
+}
+
+/** A hand-made map from `src/config/maps.json`. */
+export interface MapDef {
+  id: string;
+  name: string;
+  /** One string per row, top first: one letter per hex, separated by spaces (see MAP_LETTERS). */
+  rows: string[];
+  /** Starting units laid out like `rows` (see UNIT_LETTERS); omitted means the standard deployment. */
+  units?: string[];
+}
+
+export interface Deployment {
+  side: Side;
+  type: UnitType;
+  pos: Hex;
+}
+
+/** Player (blue) units are i/a/r; the AI's (red) are the next letter along. */
+export const UNIT_LETTERS: Record<string, [Side, UnitType]> = {
+  i: ['blue', 'infantry'],
+  j: ['red', 'infantry'],
+  a: ['blue', 'armour'],
+  b: ['red', 'armour'],
+  r: ['blue', 'artillery'],
+  s: ['red', 'artillery'],
+};
+
+export const MAP_LETTERS: Record<string, Terrain> = {
+  '.': 'plain',
+  f: 'forest',
+  h: 'hills',
+  l: 'water',
+  r: 'river',
+  b: 'bridge',
+};
+
+export const PRESET_MAPS: MapDef[] = presetMaps;
+
+/** Split a hex grid into its letters, calling `cell` for each hex in reading order. */
+function readGrid(name: string, lines: string[], cell: (letter: string, h: Hex, row: number) => void): void {
+  if (lines.length !== MAP_HEIGHT) throw new Error(`${name}: expected ${MAP_HEIGHT} rows, got ${lines.length}`);
+  lines.forEach((line, row) => {
+    const cells = line.trim().split(/\s+/);
+    if (cells.length !== rowWidth(row)) {
+      throw new Error(`${name}: row ${row + 1} should have ${rowWidth(row)} hexes, got ${cells.length}`);
+    }
+    cells.forEach((letter, col) => cell(letter, fromOffset(col, row), row));
+  });
+}
+
+export function parseMap(def: MapDef): GameMap {
+  const map = new GameMap(MAP_WIDTH, MAP_HEIGHT);
+  readGrid(def.name, def.rows, (letter, h, row) => {
+    const t = MAP_LETTERS[letter];
+    if (!t) throw new Error(`${def.name}: unknown terrain '${letter}' in row ${row + 1}`);
+    map.tiles.set(key(h), t);
+    map.hexes.push(h);
+  });
+  return map;
+}
+
+/** The starting units of a preset map, or null if it uses the standard deployment. */
+export function parseUnits(def: MapDef): Deployment[] | null {
+  if (!def.units) return null;
+  const units: Deployment[] = [];
+  readGrid(`${def.name} units`, def.units, (letter, pos, row) => {
+    if (letter === '.') return;
+    const unit = UNIT_LETTERS[letter];
+    if (!unit) throw new Error(`${def.name}: unknown unit '${letter}' in units row ${row + 1}`);
+    units.push({ side: unit[0], type: unit[1], pos });
+  });
+  return units;
 }
 
 /** Generate a point-symmetric map; retries with derived seeds until every land hex is reachable. */

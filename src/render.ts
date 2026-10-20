@@ -1,6 +1,6 @@
-import { hpFrac } from './data';
+import { hpFrac, isRiver } from './data';
 import type { CombatResult, Game } from './game';
-import { cornerPoints, hash2, toPixel } from './hex';
+import { DIRS, cornerPoints, hash2, toPixel } from './hex';
 import type { Hex, Terrain, Unit } from './types';
 
 export const SIZE = 34;
@@ -40,10 +40,13 @@ interface UnitView {
 }
 
 const TERRAIN_FILL: Record<Terrain, [number, number, number]> = {
-  plain: [52, 38, 72],
+  plain: [88, 40, 62],
   forest: [100, 24, 52],
   hills: [38, 34, 62],
   water: [200, 40, 60],
+  // River hexes are grass with the river drawn over them.
+  river: [88, 40, 62],
+  bridge: [88, 40, 62],
 };
 
 export class Renderer {
@@ -131,6 +134,10 @@ export class Renderer {
           el('path', { d: `M${-15 + j(i + 4, 5)},${yy} q4,-4 8,0 t8,0 t8,0`, class: 'wave' }, g);
         }
         break;
+      case 'river':
+      case 'bridge':
+        this.river(g, h, t === 'bridge');
+        break;
       default:
         if (hash2(h.q, h.r, 3) > 0.55) {
           for (let i = 0; i < 3; i++) {
@@ -141,6 +148,41 @@ export class Renderer {
         }
     }
     el('polygon', { points: this.hexPoints, class: 'grid' }, g);
+  }
+
+  /**
+   * Draw the river through `h`: from the centre to the edge facing each neighbouring river hex.
+   * A river end with only one river neighbour runs off the nearest map edge instead.
+   */
+  private river(g: SVGElement, h: Hex, bridge: boolean): void {
+    const map = this.game.map;
+    const at = (d: Hex) => ({ q: h.q + d.q, r: h.r + d.r });
+    const ends = DIRS.filter((d) => isRiver(map.terrain(at(d))));
+    if (ends.length < 2) {
+      const flow = ends[0] ? toPixel(ends[0], 1) : { x: 0, y: 0 };
+      const offMap = DIRS.filter((d) => !map.has(at(d))).sort((a, b) => {
+        const pa = toPixel(a, 1);
+        const pb = toPixel(b, 1);
+        return pa.x * flow.x + pa.y * flow.y - (pb.x * flow.x + pb.y * flow.y);
+      });
+      ends.push(...offMap.slice(0, 2 - ends.length));
+    }
+    const pts = ends.map((d) => {
+      const p = toPixel(d, SIZE);
+      return { x: p.x / 2, y: p.y / 2 };
+    });
+    const d =
+      pts.length === 2
+        ? `M${pts[0].x},${pts[0].y} Q0,0 ${pts[1].x},${pts[1].y}`
+        : pts.map((p) => `M0,0 L${p.x},${p.y}`).join(' ');
+    el('path', { d, class: 'river-bank' }, g);
+    el('path', { d, class: 'river' }, g);
+    if (bridge && pts.length >= 2) {
+      const angle = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
+      const b = el('g', { transform: `rotate(${angle})` }, g);
+      el('rect', { x: -7, y: -14, width: 14, height: 28, rx: 1.5, class: 'bridge-deck' }, b);
+      for (const x of [-7, 7]) el('line', { x1: x, y1: -15, x2: x, y2: 15, class: 'bridge-rail' }, b);
+    }
   }
 
   private tree(g: SVGElement, x: number, y: number, s: number): void {

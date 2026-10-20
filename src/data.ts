@@ -89,4 +89,9 @@ export const TERRAIN: Record<Terrain, TerrainInfo> = {
     passable: false,
     stopsMove: false,
   },
+  river: { name: 'River', diceLost: 0, passable: false, stopsMove: false },
+  bridge: { name: 'Bridge', diceLost: 0, passable: true, stopsMove: false },
 };
+
+/** River hexes, with or without a bridge; drawn as one continuous river. */
+export const isRiver = (t: Terrain | undefined) => t === 'river' || t === 'bridge';

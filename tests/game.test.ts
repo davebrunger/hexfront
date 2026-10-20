@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { planAction } from '../src/ai';
-import { DIE_FACES, MAX_TURNS, attackAt, dieHits, rangeOf } from '../src/data';
+import { DIE_FACES, MAX_TURNS, TERRAIN, attackAt, dieHits, isRiver, rangeOf } from '../src/data';
 import { Game } from '../src/game';
-import { distance, eq, key, neighbors } from '../src/hex';
-import { MAP_HEIGHT, MAP_WIDTH } from '../src/map';
+import { distance, eq, fromOffset, key, neighbors } from '../src/hex';
+import { MAP_HEIGHT, MAP_WIDTH, PRESET_MAPS, parseMap, parseUnits, rowWidth } from '../src/map';
 
 /** Execute an AI plan without any animation (mirrors what the UI controller does). */
 function runPlan(game: Game): boolean {
@@ -41,13 +41,68 @@ describe('map generation', () => {
   it('is point-symmetric and the expected size', () => {
     for (const seed of [1, 2, 3, 42, 777, 12345]) {
       const { map } = new Game(seed);
-      assert.equal(map.hexes.length, MAP_WIDTH * MAP_HEIGHT);
+      assert.equal(map.hexes.length, 5 * 13 + 4 * 12);
+      for (let r = 0; r < MAP_HEIGHT; r++) {
+        assert.equal(map.hexes.filter((h) => h.r === r).length, r % 2 ? 12 : 13);
+        assert.equal(rowWidth(r), r % 2 ? MAP_WIDTH - 1 : MAP_WIDTH);
+      }
       for (const h of map.hexes) {
         const m = map.mirror(h);
         assert.ok(map.has(m), `mirror of ${key(h)} off the board`);
         assert.equal(map.terrain(h), map.terrain(m), `terrain asymmetric at ${key(h)}`);
       }
     }
+  });
+  it('draws rivers as clean lines from edge to edge, with bridges', () => {
+    for (let seed = 1; seed <= 50; seed++) {
+      const { map } = new Game(seed);
+      const river = map.hexes.filter((h) => isRiver(map.terrain(h)));
+      if (!river.length) continue;
+      let ends = 0;
+      for (const h of river) {
+        const links = neighbors(h).filter((n) => isRiver(map.terrain(n))).length;
+        assert.ok(links === 1 || links === 2, `river hex ${key(h)} has ${links} river neighbours (seed ${seed})`);
+        if (links === 1) {
+          ends++;
+          assert.ok(neighbors(h).some((n) => !map.has(n)), `river end ${key(h)} is not on the map edge`);
+        }
+      }
+      assert.equal(ends, 2);
+      assert.ok(river.some((h) => map.terrain(h) === 'bridge'), `seed ${seed} has no bridge`);
+      assert.equal(TERRAIN.river.passable, false);
+      assert.equal(TERRAIN.bridge.passable, true);
+    }
+  });
+  it('loads every preset map from config', () => {
+    assert.ok(PRESET_MAPS.some((m) => m.name === 'Pegasus Bridge'));
+    for (const def of PRESET_MAPS) {
+      const g = new Game(1, def);
+      assert.equal(g.map.hexes.length, 5 * 13 + 4 * 12);
+      assert.ok(g.unitsOf('blue').length > 0 && g.unitsOf('red').length > 0);
+    }
+    const pegasus = new Game(1, PRESET_MAPS.find((m) => m.id === 'pegasus-bridge'));
+    assert.equal(pegasus.unitsOf('blue').length, 8);
+    assert.equal(pegasus.unitsOf('red').length, 6);
+    assert.ok(pegasus.units.every((u) => u.type === 'infantry'));
+    assert.equal(pegasus.unitAt(fromOffset(0, 0))?.side, 'red');
+    assert.equal(pegasus.unitAt(fromOffset(8, 8))?.side, 'blue');
+    assert.equal(pegasus.map.terrain(fromOffset(3, 2)), 'bridge');
+    assert.equal(pegasus.map.terrain(fromOffset(5, 5)), 'water');
+    assert.equal(pegasus.map.terrain(fromOffset(0, 8)), 'river');
+  });
+  it('rejects malformed map definitions', () => {
+    const rows = [...PRESET_MAPS[0].rows];
+    assert.throws(() => parseMap({ id: 'x', name: 'Short', rows: rows.slice(1) }), /expected 9 rows/);
+    rows[1] = rows[1] + ' .';
+    assert.throws(() => parseMap({ id: 'x', name: 'Wide', rows }), /row 2 should have 12 hexes/);
+    rows[1] = rows[1].replace(' .', '').replace('.', 'z');
+    assert.throws(() => parseMap({ id: 'x', name: 'Odd', rows }), /unknown terrain 'z'/);
+    const units = [...PRESET_MAPS[0].units!];
+    units[0] = units[0].replace('j', 'q');
+    assert.throws(() => parseUnits({ ...PRESET_MAPS[0], units }), /unknown unit 'q'/);
+    const onRiver = [...PRESET_MAPS[0].units!];
+    onRiver[8] = 'i' + onRiver[8].slice(1); // the bottom-left hex is river
+    assert.throws(() => new Game(1, { ...PRESET_MAPS[0], units: onRiver }), /impassable/);
   });
   it('is deterministic for a seed', () => {
     const a = new Game(99).map;
@@ -57,6 +112,11 @@ describe('map generation', () => {
 });
 
 describe('starting position', () => {
+  it('starts blue at the bottom and red at the top', () => {
+    const g = new Game(1);
+    for (const u of g.unitsOf('blue')) assert.ok(u.pos.r >= MAP_HEIGHT - 2);
+    for (const u of g.unitsOf('red')) assert.ok(u.pos.r <= 1);
+  });
   it('places 8 units per side on distinct, passable hexes', () => {
     for (const seed of [1, 5, 8, 21, 314]) {
       const g = new Game(seed);
@@ -64,7 +124,7 @@ describe('starting position', () => {
       assert.equal(g.unitsOf('red').length, 8);
       const keys = new Set(g.units.map((u) => key(u.pos)));
       assert.equal(keys.size, 16);
-      for (const u of g.units) assert.notEqual(g.map.terrain(u.pos), 'water');
+      for (const u of g.units) assert.ok(TERRAIN[g.map.terrain(u.pos)!].passable);
     }
   });
 });
