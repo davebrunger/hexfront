@@ -63,3 +63,7 @@ Keys: `Esc` cancel · `N` next ready unit · `Space` end turn.
 
 The rules engine is independent of the browser, so adding a second human player, a different AI, or network play means
 changing `main.ts`, not the rules.
+
+## License
+
+[MIT](LICENSE)
