@@ -1,4 +1,4 @@
-import { DIE_FACES, DIE_LABELS, MAX_TURNS, OBSTACLES, SIDE_NAMES, TERRAIN, UNIT_SPECS, attackAt, dieHits, hitChance, rangeOf, type DieFace } from './data';
+import { DIE_FACES, DIE_LABELS, MAX_TURNS, OBSTACLES, ORDERS_PER_TURN, SIDE_NAMES, TERRAIN, UNIT_SPECS, attackAt, dieHits, hitChance, rangeOf, type DieFace } from './data';
 import { distance, eq, fromOffset, hexesOnLine, key, neighbors } from './hex';
 import { generateMap, mulberry32, parseMap, parseUnits, type Deployment, type GameMap, type MapDef } from './map';
 import type { Hex, LogEntry, Side, Unit, UnitType } from './types';
@@ -25,6 +25,12 @@ export interface CombatResult {
   defenderDied: boolean;
   ranged: boolean;
 }
+
+/**
+ * A turn runs in three phases: give orders to up to ORDERS_PER_TURN units, move the ordered units
+ * one at a time, then attack with them one at a time.
+ */
+export type Phase = 'orders' | 'move' | 'attack';
 
 export const other = (s: Side): Side => (s === 'allied' ? 'axis' : 'allied');
 
@@ -57,6 +63,11 @@ export class Game {
   units: Unit[] = [];
   turn = 1;
   current: Side = 'allied';
+  phase: Phase = 'orders';
+  /** Ids of the current side's units ordered this turn. */
+  readonly ordered = new Set<number>();
+  /** The unit that moved last this phase; moving another unit ends its movement. */
+  private lastMover: Unit | null = null;
   winner: Side | 'draw' | null = null;
   winReason = '';
   log: LogEntry[] = [];
@@ -122,15 +133,63 @@ export class Game {
     return (t !== undefined && TERRAIN[t].stopsMove) || (o !== undefined && OBSTACLES[o.kind].stopsMove) || this.inEnemyZoc(side, h);
   }
 
-  canMove(u: Unit): boolean {
-    return !u.attacked && u.mp > 0 && u.side === this.current;
+  // ---------------------------------------------------------------- phases
+
+  /** Order or unorder one of the current side's units. Returns false if it can't be ordered. */
+  toggleOrder(u: Unit): boolean {
+    if (this.phase !== 'orders' || u.side !== this.current) return false;
+    if (this.ordered.has(u.id)) this.ordered.delete(u.id);
+    else if (this.ordered.size < ORDERS_PER_TURN) this.ordered.add(u.id);
+    else return false;
+    return true;
   }
 
-  /** Every hex the unit could pass through or stop on this turn (incl. its own hex). */
-  reachable(u: Unit): Map<string, Reach> {
+  /** Finish the order phase with the units ordered so far. */
+  confirmOrders(): void {
+    if (this.phase !== 'orders') return;
+    this.phase = 'move';
+    const n = this.ordered.size;
+    this.addLog(this.current, `${SIDE_NAMES[this.current]} order ${n} unit${n === 1 ? '' : 's'}`);
+  }
+
+  /** Order exactly `units` and move on to the movement phase. */
+  giveOrders(units: Unit[]): void {
+    this.ordered.clear();
+    for (const u of units.slice(0, ORDERS_PER_TURN)) this.toggleOrder(u);
+    this.confirmOrders();
+  }
+
+  /** Finish the movement phase; ordered units can now attack. */
+  endMovement(): void {
+    if (this.phase !== 'move') return;
+    this.phase = 'attack';
+    for (const u of this.units) u.done = false;
+  }
+
+  isOrdered(u: Unit): boolean {
+    return u.side === this.current && this.ordered.has(u.id);
+  }
+
+  /** Whether `u` has something it can still do in the current phase. */
+  isReady(u: Unit): boolean {
+    if (this.winner || u.side !== this.current) return false;
+    if (this.phase === 'orders') return this.ordered.has(u.id) || this.ordered.size < ORDERS_PER_TURN;
+    if (this.phase === 'move') return this.canMove(u);
+    return this.attackTargets(u).length > 0 || this.canClearObstacle(u);
+  }
+
+  canMove(u: Unit): boolean {
+    return this.phase === 'move' && this.isOrdered(u) && !u.attacked && u.mp > 0;
+  }
+
+  /**
+   * Every hex the unit could pass through or stop on this turn (incl. its own hex). With
+   * `planning`, works out where it could go if ordered, whatever the phase.
+   */
+  reachable(u: Unit, planning = false): Map<string, Reach> {
     const result = new Map<string, Reach>();
     result.set(key(u.pos), { hex: u.pos, cost: 0, prev: null });
-    if (!this.canMove(u)) return result;
+    if (planning ? u.mp <= 0 || u.side !== this.current : !this.canMove(u)) return result;
 
     const frontier: { hex: Hex; cost: number }[] = [{ hex: u.pos, cost: 0 }];
     while (frontier.length) {
@@ -231,7 +290,13 @@ export class Game {
   /** Whether `u` can clear the obstacle it stands on instead of attacking (infantry on wire). */
   canClearObstacle(u: Unit): boolean {
     const o = this.map.obstacles.get(key(u.pos));
-    return o !== undefined && OBSTACLES[o.kind].clearedInsteadOfAttackBy.includes(u.type) && this.mayAttackFrom(u, u.pos, u.spaces);
+    return (
+      this.phase === 'attack' &&
+      this.isOrdered(u) &&
+      o !== undefined &&
+      OBSTACLES[o.kind].clearedInsteadOfAttackBy.includes(u.type) &&
+      this.mayAttackFrom(u, u.pos, u.spaces)
+    );
   }
 
   /** Clear the obstacle `u` stands on; this uses up its attack for the turn. */
@@ -244,7 +309,9 @@ export class Game {
     this.addLog(u.side, `${UNIT_SPECS[u.type].name} clears the ${OBSTACLES[o.kind].name.toLowerCase()}`);
   }
 
+  /** Enemies `u` can attack now: only ordered units, in the attack phase. */
   attackTargets(u: Unit): Unit[] {
+    if (this.phase !== 'attack' || !this.isOrdered(u)) return [];
     return this.targetsFrom(u, u.pos, this.spacesMoved(u));
   }
 
@@ -320,6 +387,8 @@ export class Game {
     const r = reach.get(key(dest));
     if (!r || eq(dest, u.pos) || this.unitAt(dest)) throw new Error('Illegal move');
     const path = this.pathTo(reach, dest);
+    if (this.lastMover && this.lastMover !== u) this.lastMover.mp = 0;
+    this.lastMover = u;
     const name = UNIT_SPECS[u.type].name;
     for (const left of [u.pos, ...path.slice(0, -1)]) {
       const o = this.map.obstacles.get(key(left));
@@ -357,6 +426,9 @@ export class Game {
   }
 
   private startTurn(): void {
+    this.phase = 'orders';
+    this.ordered.clear();
+    this.lastMover = null;
     for (const u of this.unitsOf(this.current)) {
       u.mp = UNIT_SPECS[u.type].move;
       u.spaces = 0;

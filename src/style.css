@@ -177,6 +177,7 @@ button.primary kbd { border-color: #2a1f0855; background: #2a1f0816; }
 .badge-text { fill: #fff; font: 700 10.5px var(--sans); text-anchor: middle; }
 .ready-dot { fill: #8dff7a; stroke: #12330c; stroke-width: 1.2; animation: blink 1.4s ease-in-out infinite; }
 .unit.spent .unit-body { opacity: 0.62; filter: saturate(0.55); }
+.unit.ordered .counter { stroke: var(--gold); stroke-width: 3; }
 .unit.dying .unit-body { opacity: 0; transform: scale(0.5) rotate(-8deg); }
 .unit-body.hit { animation: shake 0.3s; filter: brightness(1.6) saturate(1.4); }
 @keyframes shake { 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }

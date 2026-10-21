@@ -20,6 +20,7 @@
         <aside class="panel">
           <div class="card" id="turn-card">
             <div class="turn-line"><span id="turn-label"></span><span id="side-label" class="side-pill"></span></div>
+            <p id="phase-hint" class="hint"></p>
             <div class="stats">
               <div><span class="k">Units</span><b id="forces"></b></div>
               <div><span class="k">Strength</span><b id="score"></b></div>
@@ -38,7 +39,8 @@
             <summary>How to play</summary>
             <ul>
               <li><b>Select</b> one of your units. Bright white hexes show where it can move and still attack, faint dashed ones where it can move but not attack; red-ringed enemies can be attacked.</li>
-              <li>Each unit can <b>move, then attack once</b> per turn. Attacking ends its move. Infantry can move 1 space and attack, or 2 without attacking; Armour can move up to 3 and attack; Artillery can attack, or move 1.</li>
+              <li><b>Turn sequence:</b> each turn has three phases. <b>Orders:</b> click up to 4 of your units to order them (gold outline); only they act this turn. <b>Movement:</b> move the ordered units one at a time; once you move another unit, the previous one can't move again. <b>Attack:</b> attack with the ordered units, one at a time. The main button (or <kbd>Space</kbd>) moves on to the next phase.</li>
+              <li>Each ordered unit can <b>move, then attack once</b> per turn. Infantry can move 1 space and attack, or 2 without attacking; Armour can move up to 3 and attack; Artillery can attack, or move 1.</li>
               <li><b>Attacking</b> rolls one die per point of attack, which falls off with range. Each grenade, or symbol matching the target's type, does 1 damage. Targets never fire back.</li>
               <li><b>Terrain:</b> every hex costs 1 space to enter; lakes and rivers are impassable, and bridges can only be entered from land. Entering forest or a village ends your move, and you can't attack on the turn you moved in. Attacks on a unit in forest or a village lose 1 die for infantry and 2 for armour; attacks on a unit on a hill lose 1 die unless the attacker is on a hill too. Armour attacking from a village loses 2 dice. Artillery never loses dice to terrain, and penalties add together. An attack left with no dice can't be made.</li>
               <li><b>Obstacles:</b> sandbags protect a unit on all sides: infantry and armour attacking it lose 1 die (artillery doesn't), though this doesn't add to terrain cover, the larger applies. They are removed from any hex a unit leaves. Barbed wire stops a unit entering it. Armour clears it on entering and can still attack; infantry on wire lose 1 attack die, and can clear it instead of attacking.</li>
@@ -46,7 +48,7 @@
               <li><b>Zones of control:</b> entering a hex next to an enemy ends your move.</li>
               <li>The number above a target shows dice rolled, expected damage and chance to destroy it.</li>
               <li><b>Win</b> by destroying every enemy unit, or by having more strength left after turn 30.</li>
-              <li><kbd>Esc</kbd> cancels, <kbd>N</kbd> selects the next ready unit, <kbd>C</kbd> clears wire, <kbd>Space</kbd> ends the turn.</li>
+              <li><kbd>Esc</kbd> cancels, <kbd>N</kbd> selects the next ready unit, <kbd>C</kbd> clears wire, <kbd>Space</kbd> moves on to the next phase.</li>
             </ul>
           </details>
           <div class="new-game">

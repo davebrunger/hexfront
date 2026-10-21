@@ -42,7 +42,7 @@ interface UnitView {
 const TERRAIN_FILL: Record<Terrain, [number, number, number]> = {
   plain: [88, 40, 62],
   forest: [100, 24, 52],
-  village: [88, 40, 62],
+  village: [52, 26, 64],
   hills: [38, 34, 62],
   water: [200, 40, 60],
   // River hexes are grass with the river drawn over them.
@@ -354,9 +354,10 @@ export class Renderer {
       v.bar.classList.toggle('mid', hpFrac(u) <= 0.7 && hpFrac(u) > 0.35);
       v.bar.classList.toggle('low', hpFrac(u) <= 0.35);
       const current = u.side === this.game.current;
-      const ready = current && !u.attacked && u.mp > 0;
+      const ready = this.game.isReady(u);
       v.dot.style.display = ready ? '' : 'none';
-      v.outer.classList.toggle('spent', current && !ready && !this.game.winner);
+      v.outer.classList.toggle('ordered', this.game.isOrdered(u));
+      v.outer.classList.toggle('spent', current && !ready && !this.game.winner && this.game.phase !== 'orders');
     }
     // keep nearer rows drawn on top
     const order = [...this.views.entries()].sort((a, b) => {

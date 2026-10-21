@@ -1,6 +1,6 @@
 import './style.css';
-import { planAction, type AIPlan } from './ai';
-import { MAX_TURNS, OBSTACLES, SIDE_NAMES, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
+import { planAction, type AIAction } from './ai';
+import { MAX_TURNS, OBSTACLES, ORDERS_PER_TURN, SIDE_NAMES, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
 import { Game, other } from './game';
 import { PRESET_MAPS } from './map';
 import { eq, key } from './hex';
@@ -53,7 +53,7 @@ function startGame(seed: number, mapId = '', side: Side = 'allied'): void {
   history.replaceState(null, '', url);
   renderer.load(game);
   refresh();
-  if (game.current === human) banner('Your turn');
+  if (game.current === human) phaseBanner();
   else void runAI();
 }
 
@@ -93,13 +93,20 @@ function banner(text: string, side: Side = human): void {
   bannerTimer = window.setTimeout(() => (b.className = ''), 1400);
 }
 
+const PHASE_NAMES = { orders: 'Orders', move: 'Movement', attack: 'Attack' } as const;
+
+/** Announce the phase that has just begun, e.g. "Axis Movement Phase". */
+function phaseBanner(): void {
+  banner(`${SIDE_NAMES[game.current]} ${PHASE_NAMES[game.phase]} Phase`, game.current);
+}
+
 function select(u: Unit | null): void {
   selected = u;
   refresh();
 }
 
 function readyUnits(): Unit[] {
-  return game.unitsOf(human).filter((u) => game.canMove(u) || game.attackTargets(u).length > 0 || game.canClearObstacle(u));
+  return game.unitsOf(human).filter((u) => game.isReady(u));
 }
 
 // ------------------------------------------------------------------ panel
@@ -112,7 +119,17 @@ function renderPanel(): void {
   pill.className = `side-pill ${game.current}`;
   $('forces').textContent = `${game.unitsOf(human).length} v ${game.unitsOf(aiSide()).length}`;
   $('score').textContent = `${game.score(human)} v ${game.score(aiSide())}`;
-  ($('end-turn') as HTMLButtonElement).disabled = !mine || busy || !!game.winner;
+  const button = $('end-turn') as HTMLButtonElement;
+  button.disabled = !mine || busy || !!game.winner;
+  const label = { orders: 'Confirm orders', move: 'End movement', attack: 'End turn' }[game.phase];
+  button.innerHTML = `${label} <kbd>Space</kbd>`;
+  $('phase-hint').textContent = !mine
+    ? ''
+    : game.phase === 'orders'
+      ? `Orders: click up to ${ORDERS_PER_TURN} units to order them (${game.ordered.size}/${ORDERS_PER_TURN}).`
+      : game.phase === 'move'
+        ? 'Movement: move your ordered units one at a time. Moving another unit ends the last one\'s move.'
+        : 'Attack: attack with your ordered units, one at a time.';
 
   renderInspect();
   renderLog();
@@ -171,7 +188,18 @@ function renderInspect(): void {
   const u = game.unitAt(h);
   if (u) {
     const s = UNIT_SPECS[u.type];
-    const status = u.side !== game.current ? 'waiting' : u.attacked ? 'has attacked' : u.mp > 0 ? `${u.mp} move left` : 'no moves left';
+    const status =
+      u.side !== game.current
+        ? 'waiting'
+        : game.phase === 'orders'
+          ? game.isOrdered(u) ? 'ordered' : 'not ordered'
+          : !game.isOrdered(u)
+            ? 'not ordered'
+            : u.attacked
+              ? 'has attacked'
+              : game.phase === 'move'
+                ? u.mp > 0 ? `${u.mp} move left` : 'moved'
+                : 'ready to attack';
     html += `<div class="unit-card ${u.side}">
       <div class="uc-head"><span class="swatch ${u.side}"></span><b>${s.name}</b><span class="muted">${SIDE_NAMES[u.side]} · ${u.side === human ? 'yours' : 'enemy'} · ${status}</span></div>
       <div class="bar-wrap"><div class="bar-fill ${hpFrac(u) <= 0.35 ? 'low' : hpFrac(u) <= 0.7 ? 'mid' : ''}" style="width:${hpFrac(u) * 100}%"></div></div>
@@ -214,11 +242,30 @@ async function doAttack(u: Unit, target: Unit): Promise<void> {
   busy = false;
 }
 
-async function execute(plan: AIPlan): Promise<void> {
-  if (plan.dest) await doMove(plan.unit, plan.dest);
-  if (plan.target && !game.winner) await doAttack(plan.unit, plan.target);
-  else if (plan.clear && game.canClearObstacle(plan.unit)) game.clearObstacle(plan.unit);
+/** Carry out an AI action with the same animations a player's actions get. Returns whether anything visible happened. */
+async function execute(action: AIAction): Promise<boolean> {
+  switch (action.kind) {
+    case 'orders':
+      game.giveOrders(action.units);
+      phaseBanner();
+      break;
+    case 'move':
+      if (!action.dest) return false;
+      await doMove(action.unit, action.dest);
+      break;
+    case 'endMovement':
+      game.endMovement();
+      phaseBanner();
+      break;
+    case 'attack':
+      await doAttack(action.unit, action.target);
+      break;
+    case 'clear':
+      game.clearObstacle(action.unit);
+      break;
+  }
   refresh();
+  return action.kind !== 'move' || action.dest !== null;
 }
 
 function canHumanClear(u: Unit): boolean {
@@ -245,18 +292,19 @@ function checkGameOver(): boolean {
 async function runAI(): Promise<void> {
   busy = true;
   refresh();
-  banner('Enemy turn', aiSide());
-  await sleep(700);
+  phaseBanner();
+  await sleep(900);
   while (!game.winner && game.current === aiSide()) {
-    const plan = planAction(game);
-    if (!plan) break;
-    await execute(plan);
+    const action = planAction(game);
+    if (!action) break;
+    const shown = await execute(action);
     busy = true;
-    await sleep(!plan.dest && !plan.target ? 0 : 220);
+    // Give phase announcements time to be read before the next action.
+    await sleep(!shown ? 0 : action.kind === 'orders' || action.kind === 'endMovement' ? 900 : 220);
   }
   if (!game.winner) {
     game.endTurn();
-    if (!game.winner) banner('Your turn');
+    if (!game.winner) phaseBanner();
   }
   busy = false;
   selected = null;
@@ -264,8 +312,22 @@ async function runAI(): Promise<void> {
   checkGameOver();
 }
 
+/** The main button: confirm orders, end movement, or end the turn, depending on the phase. */
 async function endTurn(): Promise<void> {
   if (busy || game.winner || game.current !== human) return;
+  if (game.phase === 'orders') {
+    game.confirmOrders();
+    phaseBanner();
+    refresh();
+    return;
+  }
+  if (game.phase === 'move') {
+    game.endMovement();
+    phaseBanner();
+    selected = selected && game.isReady(selected) ? selected : null;
+    refresh();
+    return;
+  }
   selected = null;
   game.endTurn();
   refresh();
@@ -279,6 +341,11 @@ async function onHexClick(h: Hex): Promise<void> {
   if (busy || game.winner || game.current !== human) return;
 
   const clicked = game.unitAt(h);
+  if (game.phase === 'orders') {
+    if (clicked && clicked.side === human) game.toggleOrder(clicked);
+    select(null);
+    return;
+  }
   if (selected && selected.side === human) {
     const u = selected;
     if (clicked && clicked.side !== human && game.attackTargets(u).includes(clicked)) {
@@ -290,7 +357,7 @@ async function onHexClick(h: Hex): Promise<void> {
     }
     if (!clicked && game.moveTargets(u).some((r) => eq(r.hex, h))) {
       await doMove(u, h);
-      const keepSelected = game.canMove(u) || game.attackTargets(u).length > 0;
+      const keepSelected = game.canMove(u);
       selected = keepSelected ? u : null;
       refresh();
       checkGameOver();

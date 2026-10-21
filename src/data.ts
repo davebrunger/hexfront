@@ -2,6 +2,9 @@ import type { Obstacle, Side, Terrain, UnitType } from './types';
 
 export const MAX_TURNS = 30;
 
+/** Units a side may order each turn; only ordered units move or attack. */
+export const ORDERS_PER_TURN = 4;
+
 export const SIDE_NAMES: Record<Side, string> = { allied: 'Allied', axis: 'Axis' };
 
 export interface UnitSpec {

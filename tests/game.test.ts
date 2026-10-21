@@ -1,19 +1,23 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { planAction } from '../src/ai';
+import { applyAction, planAction } from '../src/ai';
 import { DIE_FACES, MAX_TURNS, TERRAIN, attackAt, dieHits, isRiver, rangeOf } from '../src/data';
 import { Game } from '../src/game';
 import { distance, eq, fromOffset, key, neighbors } from '../src/hex';
-import type { Obstacle, Terrain } from '../src/types';
+import type { Obstacle, Terrain, Unit } from '../src/types';
 import { MAP_HEIGHT, MAP_WIDTH, MAP_LETTERS, PRESET_MAPS, parseMap, parseUnits, rowWidth } from '../src/map';
+
+/** Order `units` (of the side to move) and skip ahead to the movement or attack phase. */
+function readyFor(g: Game, phase: 'move' | 'attack', ...units: Unit[]): void {
+  g.giveOrders(units);
+  if (phase === 'attack') g.endMovement();
+}
 
 /** Execute an AI plan without any animation (mirrors what the UI controller does). */
 function runPlan(game: Game): boolean {
-  const plan = planAction(game);
-  if (!plan) return false;
-  if (plan.dest) game.moveUnit(plan.unit, plan.dest);
-  if (plan.target && !game.winner) game.attack(plan.unit, plan.target);
-  else if (plan.clear && game.canClearObstacle(plan.unit)) game.clearObstacle(plan.unit);
+  const action = planAction(game);
+  if (!action) return false;
+  applyAction(game, action);
   return true;
 }
 
@@ -155,6 +159,7 @@ describe('movement', () => {
     const g = new Game(7);
     const arm = g.unitsOf('allied').find((u) => u.type === 'armour')!;
     g.units = g.units.filter((u) => u === arm);
+    readyFor(g, 'move', arm);
     const line = [1, 2, 3].map((i) => ({ q: arm.pos.q + i, r: arm.pos.r }));
     for (const h of line) g.map.tiles.set(key(h), 'plain');
     g.map.tiles.set(key(line[0]), 'forest');
@@ -170,6 +175,7 @@ describe('movement', () => {
     const g = new Game(7);
     const arm = g.unitsOf('allied').find((u) => u.type === 'armour')!;
     g.units = [arm];
+    readyFor(g, 'move', arm);
     const line = [1, 2, 3].map((i) => ({ q: arm.pos.q + i, r: arm.pos.r }));
     for (const h of line) g.map.tiles.set(key(h), 'plain');
     g.map.tiles.set(key(line[0]), 'hills');
@@ -186,6 +192,7 @@ describe('movement', () => {
     g.map.tiles.set(key(a), 'bridge');
     g.map.tiles.set(key(b), 'bridge');
     inf.pos = a;
+    readyFor(g, 'move', inf);
     const reach = g.reachable(inf);
     assert.ok(reach.has(key(b)), 'reachable round by land');
     assert.notEqual(reach.get(key(b))!.prev, key(a), 'not straight from the neighbouring bridge');
@@ -219,6 +226,7 @@ describe('combat', () => {
     g.map.tiles.set(key(inf.pos), 'plain');
     const before = inf.hp;
     const artHp = art.hp;
+    readyFor(g, 'attack', art);
     const res = g.attack(art, inf);
     assert.equal(res.rolls.length, 3);
     const hits = res.rolls.filter((f) => f === 'grenade' || f === 'infantry').length;
@@ -385,6 +393,7 @@ describe('obstacles', () => {
     const { g, inf } = board();
     put(g, 2, 6, sandbags);
     put(g, 3, 6, sandbags);
+    readyFor(g, 'move', inf);
     const path = g.moveUnit(inf, at(4, 6));
     assert.ok(path.some((h) => eq(h, at(3, 6))), 'moved through the second sandbags');
     assert.equal(g.map.obstacles.size, 0);
@@ -392,6 +401,7 @@ describe('obstacles', () => {
   it('wire stops movement and armour clears it on entering, still able to attack', () => {
     const { g, inf, arm, enemy } = board();
     put(g, 3, 5, wire);
+    readyFor(g, 'move', inf, arm);
     const reach = g.reachable(inf);
     assert.ok(reach.has(key(at(3, 5))));
     assert.ok(![...reach.values()].some((r) => r.prev === key(at(3, 5))), 'cannot move on past wire');
@@ -400,11 +410,13 @@ describe('obstacles', () => {
     assert.equal(arm.mp, 0);
     assert.equal(g.map.obstacles.has(key(at(8, 5))), false);
     enemy.pos = at(8, 4);
+    g.endMovement();
     assert.ok(g.attackTargets(arm).includes(enemy));
   });
   it('infantry on wire roll one die fewer, and may clear it instead of attacking', () => {
     const { g, inf, arm } = board();
     put(g, 2, 6, wire);
+    readyFor(g, 'attack', inf, arm);
     assert.equal(g.diceAt('infantry', at(2, 6), at(3, 6)), 2);
     assert.ok(g.canClearObstacle(inf), 'no target needed');
     assert.equal(g.canClearObstacle(arm), false);
@@ -495,8 +507,52 @@ describe('line of sight', () => {
     inf.pos = at(2, 4);
     enemy.pos = at(4, 4);
     set(g, 3, 4, 'forest');
+    readyFor(g, 'attack', inf);
     assert.deepEqual(g.attackTargets(inf), []);
     inf.type = 'artillery';
+    assert.deepEqual(g.attackTargets(inf), [enemy]);
+  });
+});
+
+describe('turn sequence', () => {
+  it('only lets up to four ordered units act, in order, move then attack phases', () => {
+    const g = new Game(3);
+    const units = g.unitsOf('allied');
+    assert.equal(g.phase, 'orders');
+    assert.equal(g.canMove(units[0]), false, 'nothing moves before orders');
+    for (const u of units.slice(0, 4)) assert.ok(g.toggleOrder(u));
+    assert.equal(g.toggleOrder(units[4]), false, 'a fifth order is refused');
+    assert.ok(g.toggleOrder(units[0]), 'unordering frees a slot');
+    assert.ok(g.toggleOrder(units[4]));
+    g.confirmOrders();
+    assert.equal(g.phase, 'move');
+    assert.equal(g.canMove(units[0]), false, 'unordered units cannot move');
+    assert.ok(g.canMove(units[1]));
+    assert.equal(g.toggleOrder(units[0]), false, 'orders are fixed after the order phase');
+  });
+  it('ends a unit\'s movement once another unit moves', () => {
+    const g = new Game(3);
+    for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
+    const [a, b] = g.unitsOf('allied').filter((u) => u.type === 'armour');
+    g.units = [a, b, g.unitsOf('axis')[0]];
+    g.giveOrders([a, b]);
+    g.moveUnit(a, g.moveTargets(a).find((r) => r.cost === 1)!.hex);
+    assert.ok(g.canMove(a), 'can keep moving until another unit moves');
+    g.moveUnit(b, g.moveTargets(b)[0].hex);
+    assert.equal(g.canMove(a), false);
+  });
+  it('allows attacks only in the attack phase, after movement ends', () => {
+    const g = new Game(3);
+    for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
+    const inf = g.unitsOf('allied').find((u) => u.type === 'infantry')!;
+    const enemy = g.unitsOf('axis')[0];
+    g.units = [inf, enemy];
+    enemy.pos = { q: inf.pos.q + 1, r: inf.pos.r };
+    g.giveOrders([inf]);
+    assert.deepEqual(g.attackTargets(inf), [], 'no attacks during movement');
+    g.endMovement();
+    assert.equal(g.phase, 'attack');
+    assert.equal(g.canMove(inf), false, 'no moves during attacks');
     assert.deepEqual(g.attackTargets(inf), [enemy]);
   });
 });
@@ -518,6 +574,7 @@ describe('turns and victory', () => {
     last.pos = { q: art.pos.q + 2, r: art.pos.r };
     g.map.tiles.set(key(last.pos), 'plain');
     last.hp = 1;
+    readyFor(g, 'attack', art);
     // Dice can miss, so keep firing until the target falls.
     for (let i = 0; i < 100 && !g.winner; i++) {
       art.attacked = false;

@@ -1,15 +1,15 @@
-import { OBSTACLES, TERRAIN, UNIT_SPECS, attackAt, hitChance, hpFrac } from './data';
+import { OBSTACLES, ORDERS_PER_TURN, TERRAIN, UNIT_SPECS, attackAt, hitChance, hpFrac } from './data';
 import { distance, eq, key } from './hex';
 import { other, type Game } from './game';
 import type { Hex, Unit } from './types';
 
-export interface AIPlan {
-  unit: Unit;
-  dest: Hex | null;
-  target: Unit | null;
-  /** Clear the obstacle the unit ends on instead of attacking (infantry on wire). */
-  clear?: boolean;
-}
+/** One step of the AI's turn, carried out through the same Game methods a human uses. */
+export type AIAction =
+  | { kind: 'orders'; units: Unit[] }
+  | { kind: 'move'; unit: Unit; dest: Hex | null }
+  | { kind: 'endMovement' }
+  | { kind: 'attack'; unit: Unit; target: Unit }
+  | { kind: 'clear'; unit: Unit };
 
 // Scoring weights. Tuned to play aggressively rather than optimally: a cautious AI wins more
 // often on points but turns most games into a stand-off that runs to the turn limit. It starts
@@ -38,45 +38,103 @@ function danger(game: Game, unit: Unit, hex: Hex, enemies: Unit[]): number {
 }
 
 /**
- * Decide the next thing the current side's AI wants to do. Returns null when it has nothing left.
- * The plan is executed through the same Game methods a human uses, so the AI has no special powers.
+ * Decide the next thing the current side's AI wants to do. Returns null when its turn is over.
+ * It orders the units with the most to gain, moves each to its best position, then attacks.
  */
-export function planAction(game: Game): AIPlan | null {
+export function planAction(game: Game): AIAction | null {
   const side = game.current;
-  const foe = other(side);
+  if (game.phase === 'orders') return { kind: 'orders', units: chooseOrders(game) };
 
-  const unit = game.unitsOf(side).find((u) => !u.done);
-  if (!unit) return null;
-  unit.done = true;
+  if (game.phase === 'move') {
+    const unit = game.unitsOf(side).find((u) => game.isOrdered(u) && !u.done);
+    if (!unit) return { kind: 'endMovement' };
+    unit.done = true;
+    const best = bestPosition(game, unit, false);
+    return { kind: 'move', unit, dest: eq(best.hex, unit.pos) ? null : best.hex };
+  }
 
-  const enemies = game.unitsOf(foe);
-  // Aggression grows through the game, and faster when behind on score.
-  const behind = Math.max(0, game.score(foe) - game.score(side));
-  const caution = Math.max(MIN_CAUTION, 1 - CAUTION_PER_TURN * game.turn - CAUTION_PER_POINT_BEHIND * behind);
-
-  const reach = game.reachable(unit);
-  const candidates = [...reach.values()]
-    .map((r) => r.hex)
-    .filter((h) => eq(h, unit.pos) || !game.unitAt(h));
-
-  let best: { score: number; hex: Hex; target: Unit | null } | null = null;
-  for (const hex of candidates) {
-    const spaces = game.spacesMoved(unit) + reach.get(key(hex))!.cost;
-    let score = 0;
-
-    // Combat value of the best target available from this hex.
+  for (const unit of game.unitsOf(side)) {
+    if (!game.isOrdered(unit) || unit.done) continue;
+    unit.done = true;
     let target: Unit | null = null;
-    let targetVal = -Infinity;
-    for (const t of game.targetsFrom(unit, hex, spaces)) {
-      const f = game.forecast(unit, t, hex);
-      const v = f.dealt + f.killChance * 3;
+    let targetVal = 0;
+    for (const t of game.attackTargets(unit)) {
+      const v = targetValue(game, unit, t, unit.pos);
       if (v > targetVal) {
         targetVal = v;
         target = t;
       }
     }
-    if (target && targetVal > 0) score += targetVal * ATTACK_WEIGHT;
-    else target = null;
+    if (target) return { kind: 'attack', unit, target };
+    // With nothing to shoot, infantry on wire clears it instead.
+    if (game.canClearObstacle(unit)) return { kind: 'clear', unit };
+  }
+  return null;
+}
+
+/** Carry out `action` instantly (no animation), as a headless game or test does. */
+export function applyAction(game: Game, action: AIAction): void {
+  switch (action.kind) {
+    case 'orders':
+      return game.giveOrders(action.units);
+    case 'move':
+      if (action.dest) game.moveUnit(action.unit, action.dest);
+      return;
+    case 'endMovement':
+      return game.endMovement();
+    case 'attack':
+      game.attack(action.unit, action.target);
+      return;
+    case 'clear':
+      return game.clearObstacle(action.unit);
+  }
+}
+
+/** Expected damage plus a bonus for the chance of destroying the target. */
+function targetValue(game: Game, unit: Unit, target: Unit, from: Hex): number {
+  const f = game.forecast(unit, target, from);
+  return f.dealt + f.killChance * 3;
+}
+
+/**
+ * The units with the best move-and-attack available. (Ranking by the gain over standing idle
+ * instead played worse: it favours moving units up over using units already well placed.)
+ */
+function chooseOrders(game: Game): Unit[] {
+  return game
+    .unitsOf(game.current)
+    .map((u) => ({ u, score: bestPosition(game, u, true).score }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, ORDERS_PER_TURN)
+    .map((o) => o.u);
+}
+
+/**
+ * The best hex for `unit` to move to this turn, scored on the attack it could make from there,
+ * closing with the enemy, cover and danger.
+ */
+function bestPosition(game: Game, unit: Unit, planning: boolean): { score: number; hex: Hex } {
+  const side = game.current;
+  const foe = other(side);
+  const enemies = game.unitsOf(foe);
+  // Aggression grows through the game, and faster when behind on score.
+  const behind = Math.max(0, game.score(foe) - game.score(side));
+  const caution = Math.max(MIN_CAUTION, 1 - CAUTION_PER_TURN * game.turn - CAUTION_PER_POINT_BEHIND * behind);
+
+  const reach = game.reachable(unit, planning);
+  const candidates = [...reach.values()]
+    .map((r) => r.hex)
+    .filter((h) => eq(h, unit.pos) || !game.unitAt(h));
+
+  let best = { score: -Infinity, hex: unit.pos };
+  for (const hex of candidates) {
+    const spaces = game.spacesMoved(unit) + reach.get(key(hex))!.cost;
+    let score = 0;
+
+    // Combat value of the best target available from this hex.
+    let attack = 0;
+    for (const t of game.targetsFrom(unit, hex, spaces)) attack = Math.max(attack, targetValue(game, unit, t, hex));
+    score += attack * ATTACK_WEIGHT;
 
     // Closing with / keeping away from the enemy. Artillery can't move and fire, so it settles
     // where it will have 2-3 dice next turn while staying out of infantry reach.
@@ -87,7 +145,6 @@ export function planAction(game: Game): AIPlan | null {
       score -= dEnemy * (unit.type === 'armour' ? 0.8 : 0.7) * CLOSE_WEIGHT;
     }
 
-    // Forest and hills cost most attackers a die, so hold them.
     // Cover from terrain or an obstacle (they don't add together), averaged over the attackers it affects.
     const obstacle = game.map.obstacles.get(key(hex));
     const terrainCover = TERRAIN[game.map.terrain(hex)!].protection;
@@ -100,12 +157,7 @@ export function planAction(game: Game): AIPlan | null {
     score -= danger(game, unit, hex, enemies) * DANGER_WEIGHT * fragile * caution;
 
     score += game.rand() * 0.4;
-    if (!best || score > best.score) best = { score, hex, target };
+    if (score > best.score) best = { score, hex };
   }
-
-  if (!best) return { unit, dest: null, target: null };
-  // With nothing to shoot, infantry on wire clears it instead.
-  const obstacle = game.map.obstacles.get(key(best.hex));
-  const clear = !best.target && obstacle !== undefined && OBSTACLES[obstacle.kind].clearedInsteadOfAttackBy.includes(unit.type);
-  return { unit, dest: eq(best.hex, unit.pos) ? null : best.hex, target: best.target, clear };
+  return best;
 }
