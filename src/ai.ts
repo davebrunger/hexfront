@@ -1,4 +1,4 @@
-import { TERRAIN, UNIT_SPECS, attackAt, hitChance, hpFrac } from './data';
+import { OBSTACLES, TERRAIN, UNIT_SPECS, attackAt, hitChance, hpFrac } from './data';
 import { distance, eq, key } from './hex';
 import { other, type Game } from './game';
 import type { Hex, Unit } from './types';
@@ -7,6 +7,8 @@ export interface AIPlan {
   unit: Unit;
   dest: Hex | null;
   target: Unit | null;
+  /** Clear the obstacle the unit ends on instead of attacking (infantry on wire). */
+  clear?: boolean;
 }
 
 // Scoring weights. Tuned to play aggressively rather than optimally: a cautious AI wins more
@@ -86,8 +88,12 @@ export function planAction(game: Game): AIPlan | null {
     }
 
     // Forest and hills cost most attackers a die, so hold them.
-    const cover = TERRAIN[game.map.terrain(hex)!].protection;
-    score += ((cover.infantry + cover.armour) / 2) * TERRAIN_WEIGHT * caution;
+    // Cover from terrain or an obstacle (they don't add together), averaged over the attackers it affects.
+    const obstacle = game.map.obstacles.get(key(hex));
+    const terrainCover = TERRAIN[game.map.terrain(hex)!].protection;
+    const obstacleCover = obstacle ? OBSTACLES[obstacle.kind].protection : terrainCover;
+    const cover = Math.max(terrainCover.infantry + terrainCover.armour, obstacleCover.infantry + obstacleCover.armour) / 2;
+    score += cover * TERRAIN_WEIGHT * caution;
 
     // Danger: expected damage from enemy attacks next turn (forest, hills and villages reduce it).
     const fragile = 1 + (1 - hpFrac(unit)) * 1.25 + (unit.type === 'artillery' ? 0.5 : 0);
@@ -98,5 +104,8 @@ export function planAction(game: Game): AIPlan | null {
   }
 
   if (!best) return { unit, dest: null, target: null };
-  return { unit, dest: eq(best.hex, unit.pos) ? null : best.hex, target: best.target };
+  // With nothing to shoot, infantry on wire clears it instead.
+  const obstacle = game.map.obstacles.get(key(best.hex));
+  const clear = !best.target && obstacle !== undefined && OBSTACLES[obstacle.kind].clearedInsteadOfAttackBy.includes(unit.type);
+  return { unit, dest: eq(best.hex, unit.pos) ? null : best.hex, target: best.target, clear };
 }

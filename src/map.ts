@@ -1,7 +1,7 @@
 import presetMaps from './config/maps.json';
 import { TERRAIN, isRiver } from './data';
 import { distance, fromOffset, key, neighbors, toOffsetCol } from './hex';
-import type { Hex, Side, Terrain, UnitType } from './types';
+import type { Hex, Obstacle, Side, Terrain, UnitType } from './types';
 
 /** Hexes in the even (long) rows; odd rows are offset half a hex and hold one fewer. */
 export const MAP_WIDTH = 13;
@@ -24,6 +24,7 @@ export function mulberry32(seed: number): () => number {
 export class GameMap {
   readonly tiles = new Map<string, Terrain>();
   readonly hexes: Hex[] = [];
+  readonly obstacles = new Map<string, Obstacle>();
 
   constructor(
     readonly width: number,
@@ -180,6 +181,8 @@ export interface MapDef {
   rows: string[];
   /** Starting units laid out like `rows` (see UNIT_LETTERS); omitted means the standard deployment. */
   units?: string[];
+  /** Obstacles laid out like `rows` (see parseObstacle); omitted means none. */
+  obstacles?: string[];
 }
 
 export interface Deployment {
@@ -230,7 +233,22 @@ export function parseMap(def: MapDef): GameMap {
     map.tiles.set(key(h), t);
     map.hexes.push(h);
   });
+  if (def.obstacles) {
+    readGrid(`${def.name} obstacles`, def.obstacles, (letter, h, row) => {
+      if (letter === '.') return;
+      const obstacle = parseObstacle(letter);
+      if (!obstacle) throw new Error(`${def.name}: unknown obstacle '${letter}' in obstacles row ${row + 1}`);
+      map.obstacles.set(key(h), obstacle);
+    });
+  }
   return map;
+}
+
+/** `w` is barbed wire; a digit 0-5 is sandbags facing that corner (0 = top, clockwise). */
+function parseObstacle(letter: string): Obstacle | null {
+  if (letter === 'w') return { kind: 'wire' };
+  if (/^[0-5]$/.test(letter)) return { kind: 'sandbags', facing: Number(letter) };
+  return null;
 }
 
 /** The starting units of a preset map, or null if it uses the standard deployment. */

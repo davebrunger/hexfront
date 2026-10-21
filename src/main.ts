@@ -1,11 +1,11 @@
 import './style.css';
 import { planAction, type AIPlan } from './ai';
-import { MAX_TURNS, SIDE_NAMES, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
+import { MAX_TURNS, OBSTACLES, SIDE_NAMES, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
 import { Game, other } from './game';
 import { PRESET_MAPS } from './map';
 import { eq, key } from './hex';
 import { EMPTY_OVERLAY, Renderer, sleep, type Overlay } from './render';
-import type { Hex, Side, Terrain, Unit, UnitType } from './types';
+import type { Hex, Obstacle, Side, Terrain, Unit, UnitType } from './types';
 
 /** The side the player commands; the AI plays the other. */
 let human: Side = 'allied';
@@ -99,7 +99,7 @@ function select(u: Unit | null): void {
 }
 
 function readyUnits(): Unit[] {
-  return game.unitsOf(human).filter((u) => game.canMove(u) || game.attackTargets(u).length > 0);
+  return game.unitsOf(human).filter((u) => game.canMove(u) || game.attackTargets(u).length > 0 || game.canClearObstacle(u));
 }
 
 // ------------------------------------------------------------------ panel
@@ -116,6 +116,22 @@ function renderPanel(): void {
 
   renderInspect();
   renderLog();
+}
+
+/** One-line summaries of an obstacle's rules for the inspect panel. */
+function obstacleNotes(kind: Obstacle['kind']): string[] {
+  const o = OBSTACLES[kind];
+  const dice = (d: Record<UnitType, number>) =>
+    (Object.keys(d) as UnitType[]).filter((u) => d[u]).map((u) => `${UNIT_SPECS[u].name} −${d[u]}`).join(', ');
+  const names = (types: UnitType[]) => types.map((u) => UNIT_SPECS[u].name).join(', ');
+  const notes: string[] = [];
+  if (o.stopsMove) notes.push('Stops movement');
+  if (dice(o.protection)) notes.push(`Attacks on it: ${dice(o.protection)} (not added to terrain cover)`);
+  if (dice(o.attackPenalty)) notes.push(`Attacks from it: ${dice(o.attackPenalty)}`);
+  if (o.removedWhenLeft) notes.push('Removed when a unit leaves');
+  if (o.clearedOnEntryBy.length) notes.push(`${names(o.clearedOnEntryBy)} clear it on entering`);
+  if (o.clearedInsteadOfAttackBy.length) notes.push(`${names(o.clearedInsteadOfAttackBy)} can clear it instead of attacking`);
+  return notes;
 }
 
 /** One-line summaries of a terrain type's rules for the inspect panel. */
@@ -147,7 +163,11 @@ function renderInspect(): void {
   }
   const t = game.map.terrain(h)!;
   const ti = TERRAIN[t];
+  const obstacle = game.map.obstacles.get(key(h));
   let html = `<div class="terrain-line"><b>${ti.name}</b></div><div class="muted small">${terrainNotes(t).join(' · ')}</div>`;
+  if (obstacle) {
+    html += `<div class="terrain-line"><b>${OBSTACLES[obstacle.kind].name}</b></div><div class="muted small">${obstacleNotes(obstacle.kind).join(' · ')}</div>`;
+  }
   const u = game.unitAt(h);
   if (u) {
     const s = UNIT_SPECS[u.type];
@@ -157,6 +177,9 @@ function renderInspect(): void {
       <div class="bar-wrap"><div class="bar-fill ${hpFrac(u) <= 0.35 ? 'low' : hpFrac(u) <= 0.7 ? 'mid' : ''}" style="width:${hpFrac(u) * 100}%"></div></div>
       <div class="statgrid">${statRow('Strength', `${u.hp}/${s.maxHp}`)}${statRow('Move', s.attackMove === s.move ? s.move : `${s.attackMove} + attack, or ${s.move}`)}${statRow('Attack', s.attack.join(' / '))}${statRow('Range', rangeOf(u.type))}</div>
       <p class="muted small">${s.blurb}</p></div>`;
+    if (u === selected && canHumanClear(u)) {
+      html += `<button id="clear-obstacle" type="button">Clear the wire instead of attacking <kbd>C</kbd></button>`;
+    }
   }
   box.innerHTML = html;
 }
@@ -194,6 +217,18 @@ async function doAttack(u: Unit, target: Unit): Promise<void> {
 async function execute(plan: AIPlan): Promise<void> {
   if (plan.dest) await doMove(plan.unit, plan.dest);
   if (plan.target && !game.winner) await doAttack(plan.unit, plan.target);
+  else if (plan.clear && game.canClearObstacle(plan.unit)) game.clearObstacle(plan.unit);
+  refresh();
+}
+
+function canHumanClear(u: Unit): boolean {
+  return !busy && !game.winner && game.current === human && u.side === human && game.canClearObstacle(u);
+}
+
+function clearSelectedObstacle(): void {
+  if (!selected || !canHumanClear(selected)) return;
+  game.clearObstacle(selected);
+  selected = null;
   refresh();
 }
 
@@ -300,6 +335,9 @@ $('new-game').addEventListener('click', () => {
   startChosenGame();
 });
 $('overlay-new').addEventListener('click', startChosenGame);
+$('inspect').addEventListener('click', (e) => {
+  if ((e.target as Element).closest('#clear-obstacle')) clearSelectedObstacle();
+});
 
 window.addEventListener('keydown', (e) => {
   if ((e.target instanceof HTMLButtonElement || e.target instanceof HTMLSelectElement) && e.key === ' ') return; // let focused controls keep Space
@@ -308,6 +346,8 @@ window.addEventListener('keydown', (e) => {
   } else if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
     void endTurn();
+  } else if (e.key === 'c' || e.key === 'C') {
+    clearSelectedObstacle();
   } else if ((e.key === 'n' || e.key === 'N') && !busy && game.current === human && !game.winner) {
     const list = readyUnits();
     if (!list.length) return;

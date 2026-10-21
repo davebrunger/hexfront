@@ -1,7 +1,7 @@
 import { hpFrac, isRiver } from './data';
 import type { CombatResult, Game } from './game';
-import { DIRS, cornerPoints, hash2, toPixel } from './hex';
-import type { Hex, Terrain, Unit } from './types';
+import { DIRS, cornerPoints, hash2, key, toPixel } from './hex';
+import type { Hex, Obstacle, Terrain, Unit } from './types';
 
 export const SIZE = 34;
 const NS = 'http://www.w3.org/2000/svg';
@@ -55,6 +55,7 @@ export class Renderer {
   private layers!: Record<'terrain' | 'highlight' | 'units' | 'effects' | 'hit', SVGGElement>;
   private hoverEl!: SVGPolygonElement;
   private views = new Map<number, UnitView>();
+  private obstacleViews = new Map<string, SVGGElement>();
   private moving = new Set<number>();
   private hexPoints = cornerPoints(SIZE);
 
@@ -64,6 +65,7 @@ export class Renderer {
   load(game: Game): void {
     this.game = game;
     this.views.clear();
+    this.obstacleViews.clear();
     this.moving.clear();
     this.svg.replaceChildren();
 
@@ -87,6 +89,10 @@ export class Renderer {
     };
 
     for (const h of game.map.hexes) this.drawTile(h, game.map.terrain(h)!);
+    for (const h of game.map.hexes) {
+      const obstacle = game.map.obstacles.get(key(h));
+      if (obstacle) this.drawObstacle(h, obstacle);
+    }
     // paper grain over the terrain
     el('rect', { x: minX, y: minY, width: maxX - minX, height: maxY - minY, class: 'grain', filter: 'url(#paper)' }, this.layers.terrain);
 
@@ -191,6 +197,38 @@ export class Renderer {
     }
   }
 
+  private drawObstacle(h: Hex, o: Obstacle): void {
+    const { x, y } = toPixel(h, SIZE);
+    const g = el('g', { transform: `translate(${x},${y})`, class: 'obstacle' }, this.layers.terrain);
+    this.obstacleViews.set(key(h), g);
+    if (o.kind === 'wire') {
+      // A coil of wire across the hex, on two stakes, with a few barbs.
+      for (const sx of [-17, 17]) el('line', { x1: sx, y1: -9, x2: sx, y2: 9, class: 'wire-stake' }, g);
+      for (let i = 0; i < 7; i++) el('ellipse', { cx: -15 + i * 5, cy: 0, rx: 4.2, ry: 7, class: 'wire' }, g);
+      for (let i = 0; i < 4; i++) {
+        const bx = -12 + i * 8;
+        el('path', { d: `M${bx - 1.5},-8.5 l3,3 M${bx + 1.5},-8.5 l-3,3 M${bx - 1.5},5.5 l3,3 M${bx + 1.5},5.5 l-3,3`, class: 'wire-barb' }, g);
+      }
+      return;
+    }
+    // Sandbags along the two edges either side of corner `facing` (0 = top, clockwise), set just inside the hex.
+    const corner = (i: number) => {
+      const a = (Math.PI / 180) * (60 * (((i % 6) + 6) % 6) - 30);
+      return { x: SIZE * 0.84 * Math.cos(a), y: SIZE * 0.84 * Math.sin(a) };
+    };
+    const v = o.facing + 5;
+    for (const [a, b] of [[corner(v - 1), corner(v)], [corner(v), corner(v + 1)]]) {
+      const angle = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+      const bags = 4;
+      for (let i = 0; i < bags; i++) {
+        const t = (i + 0.5) / bags;
+        const bx = a.x + (b.x - a.x) * t;
+        const by = a.y + (b.y - a.y) * t;
+        el('rect', { x: -4, y: -3, width: 8, height: 6, rx: 2.6, transform: `translate(${bx},${by}) rotate(${angle})`, class: 'sandbag' }, g);
+      }
+    }
+  }
+
   private tree(g: SVGElement, x: number, y: number, s: number): void {
     el('rect', { x: x - 1, y: y + 2 * s, width: 2, height: 4 * s, class: 'trunk' }, g);
     el('polygon', { points: `${x},${y - 12 * s} ${x - 7 * s},${y} ${x + 7 * s},${y}`, class: 'tree' }, g);
@@ -212,7 +250,17 @@ export class Renderer {
 
   update(o: Overlay): void {
     this.drawHighlights(o);
+    this.syncObstacles();
     this.syncUnits();
+  }
+
+  /** Remove the graphics of obstacles that have been cleared. */
+  private syncObstacles(): void {
+    for (const [k, g] of this.obstacleViews) {
+      if (this.game.map.obstacles.has(k)) continue;
+      g.remove();
+      this.obstacleViews.delete(k);
+    }
   }
 
   private drawHighlights(o: Overlay): void {

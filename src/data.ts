@@ -1,4 +1,4 @@
-import type { Side, Terrain, UnitType } from './types';
+import type { Obstacle, Side, Terrain, UnitType } from './types';
 
 export const MAX_TURNS = 30;
 
@@ -120,6 +120,43 @@ export const TERRAIN: Record<Terrain, TerrainInfo> = {
   water: { ...WATER, name: 'Lake', sight: 'contiguous' },
   river: { ...WATER, name: 'River' },
   bridge: { ...OPEN, name: 'Bridge', land: false, landEntryOnly: true },
+};
+
+export interface ObstacleInfo {
+  name: string;
+  /** Entering a hex with this obstacle ends the unit's movement for the turn. */
+  stopsMove: boolean;
+  /** Attack dice each attacking unit type loses against a unit here. Not added to terrain protection: the larger applies. */
+  protection: Record<UnitType, number>;
+  /** Attack dice each unit type loses when attacking from here. */
+  attackPenalty: Record<UnitType, number>;
+  /** Removed when a unit leaves the hex (including passing through it). */
+  removedWhenLeft: boolean;
+  /** Unit types that remove it on entering the hex (and may still attack). */
+  clearedOnEntryBy: UnitType[];
+  /** Unit types that may remove it instead of attacking, when standing on it and able to attack. */
+  clearedInsteadOfAttackBy: UnitType[];
+}
+
+export const OBSTACLES: Record<Obstacle['kind'], ObstacleInfo> = {
+  sandbags: {
+    name: 'Sandbags',
+    stopsMove: false,
+    protection: dice(1, 1, 0),
+    attackPenalty: NONE,
+    removedWhenLeft: true,
+    clearedOnEntryBy: [],
+    clearedInsteadOfAttackBy: [],
+  },
+  wire: {
+    name: 'Barbed wire',
+    stopsMove: true,
+    protection: NONE,
+    attackPenalty: dice(1, 0, 0),
+    removedWhenLeft: false,
+    clearedOnEntryBy: ['armour'],
+    clearedInsteadOfAttackBy: ['infantry'],
+  },
 };
 
 /** River hexes, with or without a bridge; drawn as one continuous river. */

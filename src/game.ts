@@ -1,4 +1,4 @@
-import { DIE_FACES, DIE_LABELS, MAX_TURNS, SIDE_NAMES, TERRAIN, UNIT_SPECS, attackAt, dieHits, hitChance, rangeOf, type DieFace } from './data';
+import { DIE_FACES, DIE_LABELS, MAX_TURNS, OBSTACLES, SIDE_NAMES, TERRAIN, UNIT_SPECS, attackAt, dieHits, hitChance, rangeOf, type DieFace } from './data';
 import { distance, eq, fromOffset, hexesOnLine, key, neighbors } from './hex';
 import { generateMap, mulberry32, parseMap, parseUnits, type Deployment, type GameMap, type MapDef } from './map';
 import type { Hex, LogEntry, Side, Unit, UnitType } from './types';
@@ -115,10 +115,11 @@ export class Game {
     return u.spaces;
   }
 
-  /** Entering `h` ends movement: forest, hills, villages, or next to an enemy. */
+  /** Entering `h` ends movement: forest, villages, wire, or next to an enemy. */
   stopsMovement(side: Side, h: Hex): boolean {
     const t = this.map.terrain(h);
-    return (t !== undefined && TERRAIN[t].stopsMove) || this.inEnemyZoc(side, h);
+    const o = this.map.obstacles.get(key(h));
+    return (t !== undefined && TERRAIN[t].stopsMove) || (o !== undefined && OBSTACLES[o.kind].stopsMove) || this.inEnemyZoc(side, h);
   }
 
   canMove(u: Unit): boolean {
@@ -173,9 +174,7 @@ export class Game {
 
   /** Enemy units `u` could shoot at if it stood on `from` having moved `spaces` this turn. */
   targetsFrom(u: Unit, from: Hex, spaces: number): Unit[] {
-    if (u.attacked || u.side !== this.current) return [];
-    if (spaces > UNIT_SPECS[u.type].attackMove) return [];
-    if (spaces > 0 && TERRAIN[this.map.terrain(from)!].noAttackAfterEntering) return [];
+    if (!this.mayAttackFrom(u, from, spaces)) return [];
     const range = rangeOf(u.type);
     return this.units.filter(
       (e) =>
@@ -222,6 +221,29 @@ export class Game {
     return clear(1e-4) || clear(-1e-4);
   }
 
+  /** Whether `u` would be allowed to attack (or act instead of attacking) on `from` having moved `spaces`. */
+  private mayAttackFrom(u: Unit, from: Hex, spaces: number): boolean {
+    if (u.attacked || u.side !== this.current) return false;
+    if (spaces > UNIT_SPECS[u.type].attackMove) return false;
+    return !(spaces > 0 && TERRAIN[this.map.terrain(from)!].noAttackAfterEntering);
+  }
+
+  /** Whether `u` can clear the obstacle it stands on instead of attacking (infantry on wire). */
+  canClearObstacle(u: Unit): boolean {
+    const o = this.map.obstacles.get(key(u.pos));
+    return o !== undefined && OBSTACLES[o.kind].clearedInsteadOfAttackBy.includes(u.type) && this.mayAttackFrom(u, u.pos, u.spaces);
+  }
+
+  /** Clear the obstacle `u` stands on; this uses up its attack for the turn. */
+  clearObstacle(u: Unit): void {
+    if (!this.canClearObstacle(u)) throw new Error('Cannot clear obstacle');
+    const o = this.map.obstacles.get(key(u.pos))!;
+    this.map.obstacles.delete(key(u.pos));
+    u.attacked = true;
+    u.mp = 0;
+    this.addLog(u.side, `${UNIT_SPECS[u.type].name} clears the ${OBSTACLES[o.kind].name.toLowerCase()}`);
+  }
+
   attackTargets(u: Unit): Unit[] {
     return this.targetsFrom(u, u.pos, this.spacesMoved(u));
   }
@@ -241,12 +263,20 @@ export class Game {
     return Math.max(0, attackAt(type, distance(from, to)) - this.diceLost(type, from, to));
   }
 
-  /** Attack dice a unit of `type` on `from` loses to terrain when attacking a target on `to`. */
+  /**
+   * Attack dice a unit of `type` on `from` loses to terrain and obstacles when attacking a target on
+   * `to`. The target's terrain and obstacle protection don't add together (the larger applies), but
+   * penalties for where the attacker stands do add on.
+   */
   diceLost(type: UnitType, from: Hex, to: Hex): number {
     const att = TERRAIN[this.map.terrain(from) ?? 'plain'];
     const def = TERRAIN[this.map.terrain(to) ?? 'plain'];
-    const protection = def.high && att.high ? 0 : def.protection[type];
-    return protection + att.attackPenalty[type];
+    const attObstacle = this.map.obstacles.get(key(from));
+    const defObstacle = this.map.obstacles.get(key(to));
+    const terrainCover = def.high && att.high ? 0 : def.protection[type];
+    const obstacleCover = defObstacle ? OBSTACLES[defObstacle.kind].protection[type] : 0;
+    const penalty = att.attackPenalty[type] + (attObstacle ? OBSTACLES[attObstacle.kind].attackPenalty[type] : 0);
+    return Math.max(terrainCover, obstacleCover) + penalty;
   }
 
   /** Expected outcome of `att` attacking `def` from `attHex`. */
@@ -290,9 +320,22 @@ export class Game {
     const r = reach.get(key(dest));
     if (!r || eq(dest, u.pos) || this.unitAt(dest)) throw new Error('Illegal move');
     const path = this.pathTo(reach, dest);
+    const name = UNIT_SPECS[u.type].name;
+    for (const left of [u.pos, ...path.slice(0, -1)]) {
+      const o = this.map.obstacles.get(key(left));
+      if (o && OBSTACLES[o.kind].removedWhenLeft) {
+        this.map.obstacles.delete(key(left));
+        this.addLog(u.side, `${name} moves off; the ${OBSTACLES[o.kind].name.toLowerCase()} are removed`);
+      }
+    }
     u.pos = dest;
     u.mp = this.stopsMovement(u.side, dest) ? 0 : u.mp - r.cost;
     u.spaces += r.cost;
+    const o = this.map.obstacles.get(key(dest));
+    if (o && OBSTACLES[o.kind].clearedOnEntryBy.includes(u.type)) {
+      this.map.obstacles.delete(key(dest));
+      this.addLog(u.side, `${name} clears the ${OBSTACLES[o.kind].name.toLowerCase()}`);
+    }
     return path;
   }
 

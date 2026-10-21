@@ -4,7 +4,7 @@ import { planAction } from '../src/ai';
 import { DIE_FACES, MAX_TURNS, TERRAIN, attackAt, dieHits, isRiver, rangeOf } from '../src/data';
 import { Game } from '../src/game';
 import { distance, eq, fromOffset, key, neighbors } from '../src/hex';
-import type { Terrain } from '../src/types';
+import type { Obstacle, Terrain } from '../src/types';
 import { MAP_HEIGHT, MAP_WIDTH, MAP_LETTERS, PRESET_MAPS, parseMap, parseUnits, rowWidth } from '../src/map';
 
 /** Execute an AI plan without any animation (mirrors what the UI controller does). */
@@ -13,6 +13,7 @@ function runPlan(game: Game): boolean {
   if (!plan) return false;
   if (plan.dest) game.moveUnit(plan.unit, plan.dest);
   if (plan.target && !game.winner) game.attack(plan.unit, plan.target);
+  else if (plan.clear && game.canClearObstacle(plan.unit)) game.clearObstacle(plan.unit);
   return true;
 }
 
@@ -90,6 +91,17 @@ describe('map generation', () => {
     assert.equal(pegasus.map.terrain(fromOffset(3, 2)), 'bridge');
     assert.equal(pegasus.map.terrain(fromOffset(5, 5)), 'water');
     assert.equal(pegasus.map.terrain(fromOffset(0, 8)), 'river');
+  });
+  it('loads obstacles from preset maps', () => {
+    const def = PRESET_MAPS.find((m) => m.id === 'pegasus-bridge')!;
+    const { map } = new Game(1, def);
+    assert.deepEqual(map.obstacles.get(key(fromOffset(5, 2))), { kind: 'wire' });
+    assert.deepEqual(map.obstacles.get(key(fromOffset(3, 3))), { kind: 'sandbags', facing: 3 });
+    assert.equal(map.obstacles.has(key(fromOffset(0, 0))), false);
+    const obstacles = [...def.obstacles!];
+    obstacles[0] = '6' + obstacles[0].slice(1);
+    assert.throws(() => parseMap({ ...def, obstacles }), /unknown obstacle '6'/);
+    assert.equal(new Game(1).map.obstacles.size, 0, 'random maps have none');
   });
   it('rejects malformed map definitions', () => {
     const rows = [...PRESET_MAPS[0].rows];
@@ -334,6 +346,73 @@ describe('terrain combat', () => {
     assert.deepEqual(g.targetsFrom(inf, inf.pos, 1), []);
     set(g, 4, 4, 'hills');
     assert.ok(g.targetsFrom(inf, inf.pos, 1).includes(enemy));
+  });
+});
+
+describe('obstacles', () => {
+  /** An all-open board with one Allied infantry and armour and one Axis infantry, and no obstacles. */
+  function board() {
+    const g = new Game(1);
+    for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
+    const inf = g.unitsOf('allied').find((u) => u.type === 'infantry')!;
+    const arm = g.unitsOf('allied').find((u) => u.type === 'armour')!;
+    const enemy = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
+    g.units = [inf, arm, enemy];
+    inf.pos = fromOffset(2, 6);
+    arm.pos = fromOffset(8, 6);
+    enemy.pos = fromOffset(5, 2);
+    return { g, inf, arm, enemy };
+  }
+  const at = (col: number, row: number) => fromOffset(col, row);
+  const put = (g: Game, col: number, row: number, o: Obstacle) => g.map.obstacles.set(key(at(col, row)), o);
+  const sandbags: Obstacle = { kind: 'sandbags', facing: 3 };
+  const wire: Obstacle = { kind: 'wire' };
+
+  it('sandbags protect against infantry and armour, but not on top of terrain cover', () => {
+    const { g } = board();
+    put(g, 5, 4, sandbags);
+    assert.equal(g.diceAt('infantry', at(4, 4), at(5, 4)), 2);
+    assert.equal(g.diceAt('armour', at(4, 4), at(5, 4)), 1);
+    assert.equal(g.diceAt('artillery', at(4, 4), at(5, 4)), 3);
+    g.map.tiles.set(key(at(5, 4)), 'forest');
+    assert.equal(g.diceAt('infantry', at(4, 4), at(5, 4)), 2, 'forest and sandbags: still -1');
+    assert.equal(g.diceAt('armour', at(4, 4), at(5, 4)), 0, 'forest -2 is larger than sandbags -1');
+    g.map.tiles.set(key(at(5, 4)), 'hills');
+    g.map.tiles.set(key(at(4, 4)), 'hills');
+    assert.equal(g.diceAt('infantry', at(4, 4), at(5, 4)), 2, 'hill to hill: sandbags still count');
+  });
+  it('sandbags are removed from every hex a unit leaves', () => {
+    const { g, inf } = board();
+    put(g, 2, 6, sandbags);
+    put(g, 3, 6, sandbags);
+    const path = g.moveUnit(inf, at(4, 6));
+    assert.ok(path.some((h) => eq(h, at(3, 6))), 'moved through the second sandbags');
+    assert.equal(g.map.obstacles.size, 0);
+  });
+  it('wire stops movement and armour clears it on entering, still able to attack', () => {
+    const { g, inf, arm, enemy } = board();
+    put(g, 3, 5, wire);
+    const reach = g.reachable(inf);
+    assert.ok(reach.has(key(at(3, 5))));
+    assert.ok(![...reach.values()].some((r) => r.prev === key(at(3, 5))), 'cannot move on past wire');
+    put(g, 8, 5, wire);
+    g.moveUnit(arm, at(8, 5));
+    assert.equal(arm.mp, 0);
+    assert.equal(g.map.obstacles.has(key(at(8, 5))), false);
+    enemy.pos = at(8, 4);
+    assert.ok(g.attackTargets(arm).includes(enemy));
+  });
+  it('infantry on wire roll one die fewer, and may clear it instead of attacking', () => {
+    const { g, inf, arm } = board();
+    put(g, 2, 6, wire);
+    assert.equal(g.diceAt('infantry', at(2, 6), at(3, 6)), 2);
+    assert.ok(g.canClearObstacle(inf), 'no target needed');
+    assert.equal(g.canClearObstacle(arm), false);
+    g.clearObstacle(inf);
+    assert.equal(g.map.obstacles.size, 0);
+    assert.equal(inf.attacked, true);
+    put(g, 2, 6, wire);
+    assert.equal(g.canClearObstacle(inf), false, 'not after attacking');
   });
 });
 

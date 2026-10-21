@@ -136,6 +136,10 @@ button.primary kbd { border-color: #2a1f0855; background: #2a1f0816; }
 .house-wall { fill: #e4d6b5; stroke: #6b5536; stroke-width: 0.8; }
 .house-roof { fill: #a4472f; stroke: #5e2718; stroke-width: 0.8; stroke-linejoin: round; }
 .house-door { fill: #5b3d22; }
+.wire { fill: none; stroke: #3b3d40; stroke-width: 1.1; }
+.wire-stake { stroke: #5b3d22; stroke-width: 2; stroke-linecap: round; }
+.wire-barb { stroke: #3b3d40; stroke-width: 0.9; stroke-linecap: round; }
+.sandbag { fill: #c7a465; stroke: #4f3b20; stroke-width: 1; }
 .mound { fill: #a98652; stroke: #6e5330; stroke-width: 1; }
 .mound-hi { fill: none; stroke: #d9c08c; stroke-width: 1.4; stroke-linecap: round; }
 .wave { fill: none; stroke: #e6f3f8; stroke-width: 1.5; stroke-linecap: round; opacity: 0.7; }

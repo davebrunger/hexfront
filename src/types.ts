@@ -6,6 +6,12 @@ export interface Hex {
 
 export type Side = 'allied' | 'axis';
 export type UnitType = 'infantry' | 'armour' | 'artillery';
+/**
+ * A man-made obstacle on a hex. Sandbags cover the two edges either side of one corner: `facing` 0
+ * is the top corner, counting clockwise to 5. Their rules are in OBSTACLES (data.ts).
+ */
+export type Obstacle = { kind: 'wire' } | { kind: 'sandbags'; facing: number };
+
 export type Terrain = 'plain' | 'forest' | 'hills' | 'village' | 'water' | 'river' | 'bridge';
 
 export interface Unit {
