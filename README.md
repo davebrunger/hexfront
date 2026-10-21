@@ -1,7 +1,7 @@
 # Hexfront
 
 A turn-based hex wargame for the browser. Graphics are plain **SVG**, code is **TypeScript**, tooling is **Vite**.
-Command the Allied or Axis side against a computer opponent, on a randomly generated, point-symmetric map or a preset one. The Allies start at the bottom of the map and move first.
+Command the Allied or Axis side against a computer opponent, on a randomly generated, point-symmetric map or a preset one. The Allies start at the bottom of the map. Preset maps say which side moves first; on a random map it's chosen at random.
 
 ## Run it
 
@@ -17,7 +17,7 @@ Choose your side under **Play as** before pressing **New game**. Add `?seed=1234
 
 ### Preset maps
 
-Pick a map from the **Map** list before pressing **New game**, or leave it on *Random map*. Preset maps live in [`src/config/maps.json`](src/config/maps.json). Each has an `id` (used in the URL as `?map=`), a `name`, and 9 `rows` of terrain letters separated by spaces, top row first. Rows alternate 13 and 12 hexes; start the 12-hex rows with a space so they line up.
+Pick a map from the **Map** list before pressing **New game**, or leave it on *Random map*. Preset maps live in [`src/config/maps.json`](src/config/maps.json). Each has an `id` (used in the URL as `?map=`), a `name`, a `firstSide` (`"allied"` or `"axis"`), and 9 `rows` of terrain letters separated by spaces, top row first. Rows alternate 13 and 12 hexes; start the 12-hex rows with a space so they line up.
 
 | Letter | Terrain |
 |---|---|

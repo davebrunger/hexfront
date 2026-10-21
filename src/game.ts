@@ -62,7 +62,9 @@ export class Game {
   readonly map: GameMap;
   units: Unit[] = [];
   turn = 1;
-  current: Side = 'allied';
+  /** The side that moves first each round: set by a preset map, random on a generated one. */
+  readonly firstSide: Side;
+  current: Side;
   phase: Phase = 'orders';
   /** Ids of the current side's units ordered this turn. */
   readonly ordered = new Set<number>();
@@ -81,6 +83,11 @@ export class Game {
   ) {
     this.map = mapDef ? parseMap(mapDef) : generateMap(seed);
     this.rng = mulberry32(seed ^ 0x9e3779b9);
+    if (mapDef && mapDef.firstSide !== 'allied' && mapDef.firstSide !== 'axis') {
+      throw new Error(`${mapDef.name}: firstSide must be "allied" or "axis"`);
+    }
+    this.firstSide = mapDef ? mapDef.firstSide : this.rng() < 0.5 ? 'allied' : 'axis';
+    this.current = this.firstSide;
     const units: Deployment[] =
       (mapDef && parseUnits(mapDef)) ??
       START_UNITS.flatMap(([type, col, row]) => [
@@ -96,7 +103,7 @@ export class Game {
       if (!this.unitsOf(side).length) throw new Error(`Map has no ${side} units`);
     }
     this.startTurn();
-    this.addLog(null, 'Orders received. The campaign begins.');
+    this.addLog(null, `Orders received. The campaign begins; ${SIDE_NAMES[this.firstSide]} move first.`);
   }
 
   /** Public so the AI can add a little variety without owning an RNG of its own. */
@@ -410,12 +417,12 @@ export class Game {
 
   endTurn(): void {
     if (this.winner) return;
-    if (this.current === 'axis' && this.turn >= MAX_TURNS) {
+    if (this.current !== this.firstSide && this.turn >= MAX_TURNS) {
       this.decideByScore();
       return;
     }
     this.current = other(this.current);
-    if (this.current === 'allied') this.turn++;
+    if (this.current === this.firstSide) this.turn++;
     this.startTurn();
   }
 

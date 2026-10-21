@@ -5,7 +5,14 @@ import { DIE_FACES, MAX_TURNS, TERRAIN, attackAt, dieHits, isRiver, rangeOf } fr
 import { Game } from '../src/game';
 import { distance, eq, fromOffset, key, neighbors } from '../src/hex';
 import type { Obstacle, Terrain, Unit } from '../src/types';
-import { MAP_HEIGHT, MAP_WIDTH, MAP_LETTERS, PRESET_MAPS, parseMap, parseUnits, rowWidth } from '../src/map';
+import { MAP_HEIGHT, MAP_WIDTH, MAP_LETTERS, PRESET_MAPS, parseMap, parseUnits, rowWidth, type MapDef } from '../src/map';
+
+/** A new game with the Allies to move (random maps pick the first side at random). */
+function alliedGame(seed: number, mapDef?: MapDef): Game {
+  const g = new Game(seed, mapDef);
+  if (g.current !== 'allied') g.endTurn();
+  return g;
+}
 
 /** Order `units` (of the side to move) and skip ahead to the movement or attack phase. */
 function readyFor(g: Game, phase: 'move' | 'attack', ...units: Unit[]): void {
@@ -22,7 +29,7 @@ function runPlan(game: Game): boolean {
 }
 
 function playOut(seed: number): Game {
-  const game = new Game(seed);
+  const game = alliedGame(seed);
   let guard = 0;
   while (!game.winner) {
     while (!game.winner && runPlan(game)) assert.ok(++guard < 100000, 'AI loop runaway');
@@ -46,7 +53,7 @@ describe('hex maths', () => {
 describe('map generation', () => {
   it('is point-symmetric and the expected size', () => {
     for (const seed of [1, 2, 3, 42, 777, 12345]) {
-      const { map } = new Game(seed);
+      const { map } = alliedGame(seed);
       assert.equal(map.hexes.length, 5 * 13 + 4 * 12);
       for (let r = 0; r < MAP_HEIGHT; r++) {
         assert.equal(map.hexes.filter((h) => h.r === r).length, r % 2 ? 12 : 13);
@@ -61,7 +68,7 @@ describe('map generation', () => {
   });
   it('draws rivers as clean lines from edge to edge, with bridges', () => {
     for (let seed = 1; seed <= 50; seed++) {
-      const { map } = new Game(seed);
+      const { map } = alliedGame(seed);
       const river = map.hexes.filter((h) => isRiver(map.terrain(h)));
       if (!river.length) continue;
       let ends = 0;
@@ -82,11 +89,11 @@ describe('map generation', () => {
   it('loads every preset map from config', () => {
     assert.ok(PRESET_MAPS.some((m) => m.name === 'Pegasus Bridge'));
     for (const def of PRESET_MAPS) {
-      const g = new Game(1, def);
+      const g = alliedGame(1, def);
       assert.equal(g.map.hexes.length, 5 * 13 + 4 * 12);
       assert.ok(g.unitsOf('allied').length > 0 && g.unitsOf('axis').length > 0);
     }
-    const pegasus = new Game(1, PRESET_MAPS.find((m) => m.id === 'pegasus-bridge'));
+    const pegasus = alliedGame(1, PRESET_MAPS.find((m) => m.id === 'pegasus-bridge'));
     assert.equal(pegasus.unitsOf('allied').length, 8);
     assert.equal(pegasus.unitsOf('axis').length, 6);
     assert.ok(pegasus.units.every((u) => u.type === 'infantry'));
@@ -98,45 +105,45 @@ describe('map generation', () => {
   });
   it('loads obstacles from preset maps', () => {
     const def = PRESET_MAPS.find((m) => m.id === 'pegasus-bridge')!;
-    const { map } = new Game(1, def);
+    const { map } = alliedGame(1, def);
     assert.deepEqual(map.obstacles.get(key(fromOffset(5, 2))), { kind: 'wire' });
     assert.deepEqual(map.obstacles.get(key(fromOffset(3, 3))), { kind: 'sandbags', facing: 3 });
     assert.equal(map.obstacles.has(key(fromOffset(0, 0))), false);
     const obstacles = [...def.obstacles!];
     obstacles[0] = '6' + obstacles[0].slice(1);
     assert.throws(() => parseMap({ ...def, obstacles }), /unknown obstacle '6'/);
-    assert.equal(new Game(1).map.obstacles.size, 0, 'random maps have none');
+    assert.equal(alliedGame(1).map.obstacles.size, 0, 'random maps have none');
   });
   it('rejects malformed map definitions', () => {
     const rows = [...PRESET_MAPS[0].rows];
-    assert.throws(() => parseMap({ id: 'x', name: 'Short', rows: rows.slice(1) }), /expected 9 rows/);
+    assert.throws(() => parseMap({ id: 'x', name: 'Short', firstSide: 'allied', rows: rows.slice(1) }), /expected 9 rows/);
     rows[1] = rows[1] + ' .';
-    assert.throws(() => parseMap({ id: 'x', name: 'Wide', rows }), /row 2 should have 12 hexes/);
+    assert.throws(() => parseMap({ id: 'x', name: 'Wide', firstSide: 'allied', rows }), /row 2 should have 12 hexes/);
     rows[1] = rows[1].replace(' .', '').replace('.', 'z');
-    assert.throws(() => parseMap({ id: 'x', name: 'Odd', rows }), /unknown terrain 'z'/);
+    assert.throws(() => parseMap({ id: 'x', name: 'Odd', firstSide: 'allied', rows }), /unknown terrain 'z'/);
     const units = [...PRESET_MAPS[0].units!];
     units[0] = units[0].replace('j', 'q');
     assert.throws(() => parseUnits({ ...PRESET_MAPS[0], units }), /unknown unit 'q'/);
     const onRiver = [...PRESET_MAPS[0].units!];
     onRiver[8] = 'i' + onRiver[8].slice(1); // the bottom-left hex is river
-    assert.throws(() => new Game(1, { ...PRESET_MAPS[0], units: onRiver }), /impassable/);
+    assert.throws(() => alliedGame(1, { ...PRESET_MAPS[0], units: onRiver }), /impassable/);
   });
   it('is deterministic for a seed', () => {
-    const a = new Game(99).map;
-    const b = new Game(99).map;
+    const a = alliedGame(99).map;
+    const b = alliedGame(99).map;
     for (const h of a.hexes) assert.equal(a.terrain(h), b.terrain(h));
   });
 });
 
 describe('starting position', () => {
   it('starts the Allies at the bottom and the Axis at the top', () => {
-    const g = new Game(1);
+    const g = alliedGame(1);
     for (const u of g.unitsOf('allied')) assert.ok(u.pos.r >= MAP_HEIGHT - 2);
     for (const u of g.unitsOf('axis')) assert.ok(u.pos.r <= 1);
   });
   it('places 8 units per side on distinct, passable hexes', () => {
     for (const seed of [1, 5, 8, 21, 314]) {
-      const g = new Game(seed);
+      const g = alliedGame(seed);
       assert.equal(g.unitsOf('allied').length, 8);
       assert.equal(g.unitsOf('axis').length, 8);
       const keys = new Set(g.units.map((u) => key(u.pos)));
@@ -148,7 +155,7 @@ describe('starting position', () => {
 
 describe('movement', () => {
   it('respects movement points and cannot stop on units', () => {
-    const g = new Game(7);
+    const g = alliedGame(7);
     const u = g.unitsOf('allied')[0];
     for (const r of g.moveTargets(u)) {
       assert.ok(r.cost <= u.mp);
@@ -156,7 +163,7 @@ describe('movement', () => {
     }
   });
   it('entering forest or hills ends movement for the turn', () => {
-    const g = new Game(7);
+    const g = alliedGame(7);
     const arm = g.unitsOf('allied').find((u) => u.type === 'armour')!;
     g.units = g.units.filter((u) => u === arm);
     readyFor(g, 'move', arm);
@@ -172,7 +179,7 @@ describe('movement', () => {
     assert.equal(g.canMove(arm), false);
   });
   it('hills do not stop movement', () => {
-    const g = new Game(7);
+    const g = alliedGame(7);
     const arm = g.unitsOf('allied').find((u) => u.type === 'armour')!;
     g.units = [arm];
     readyFor(g, 'move', arm);
@@ -183,7 +190,7 @@ describe('movement', () => {
     assert.equal(MAP_LETTERS.v, 'village');
   });
   it('bridges can only be entered from land', () => {
-    const g = new Game(7);
+    const g = alliedGame(7);
     const inf = g.unitsOf('allied').find((u) => u.type === 'infantry')!;
     g.units = [inf];
     for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
@@ -198,7 +205,7 @@ describe('movement', () => {
     assert.notEqual(reach.get(key(b))!.prev, key(a), 'not straight from the neighbouring bridge');
   });
   it('enemy zone of control stops movement', () => {
-    const g = new Game(7);
+    const g = alliedGame(7);
     const mover = g.unitsOf('allied').find((u) => u.type === 'armour')!;
     const enemy = g.unitsOf('axis')[0];
     // Drop the enemy two hexes away from the mover on open ground.
@@ -219,7 +226,7 @@ describe('movement', () => {
 
 describe('combat', () => {
   it('damage equals the dice that hit, with no return fire', () => {
-    const g = new Game(3);
+    const g = alliedGame(3);
     const art = g.unitsOf('allied').find((u) => u.type === 'artillery')!;
     const inf = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
     inf.pos = { q: art.pos.q + 1, r: art.pos.r }; // adjacent, well within infantry range
@@ -243,7 +250,7 @@ describe('combat', () => {
   it('dice fall off with distance and terrain', () => {
     assert.deepEqual([1, 2, 3, 4].map((d) => attackAt('infantry', d)), [3, 2, 1, 0]);
     assert.equal(rangeOf('artillery'), 6);
-    const g = new Game(3);
+    const g = alliedGame(3);
     const art = g.unitsOf('allied').find((u) => u.type === 'artillery')!;
     const inf = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
     inf.pos = { q: art.pos.q + 1, r: art.pos.r };
@@ -263,7 +270,7 @@ describe('combat', () => {
     assert.ok(!g.attackTargets(mine).includes(inf), 'cannot attack with no dice');
   });
   it('limits how far each unit can move and still attack', () => {
-    const g = new Game(3);
+    const g = alliedGame(3);
     const pick = (type: string) => g.unitsOf('allied').find((u) => u.type === type)!;
     const enemy = g.unitsOf('axis')[0];
     const near = (u: { pos: { q: number; r: number } }) => {
@@ -284,7 +291,7 @@ describe('combat', () => {
     assert.deepEqual(g.targetsFrom(art, art.pos, 1), []);
   });
   it('artillery ignores terrain dice penalties', () => {
-    const g = new Game(3);
+    const g = alliedGame(3);
     const art = g.unitsOf('allied').find((u) => u.type === 'artillery')!;
     const inf = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
     inf.pos = { q: art.pos.q + 1, r: art.pos.r };
@@ -292,7 +299,7 @@ describe('combat', () => {
     assert.equal(g.forecast(art, inf).dice, 3);
   });
   it('forecasts the chance to destroy a target', () => {
-    const g = new Game(3);
+    const g = alliedGame(3);
     const a = g.unitsOf('allied').find((u) => u.type === 'armour')!;
     const d = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
     d.pos = { q: a.pos.q + 1, r: a.pos.r };
@@ -307,7 +314,7 @@ describe('combat', () => {
 
 describe('terrain combat', () => {
   function board(): Game {
-    const g = new Game(1);
+    const g = alliedGame(1);
     for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
     return g;
   }
@@ -360,7 +367,7 @@ describe('terrain combat', () => {
 describe('obstacles', () => {
   /** An all-open board with one Allied infantry and armour and one Axis infantry, and no obstacles. */
   function board() {
-    const g = new Game(1);
+    const g = alliedGame(1);
     for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
     const inf = g.unitsOf('allied').find((u) => u.type === 'infantry')!;
     const arm = g.unitsOf('allied').find((u) => u.type === 'armour')!;
@@ -431,7 +438,7 @@ describe('obstacles', () => {
 describe('line of sight', () => {
   /** A game on an all-open board with just one unit per side, `from` attacking `to`. */
   function board(): Game {
-    const g = new Game(1);
+    const g = alliedGame(1);
     for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
     g.units = [g.unitsOf('allied').find((u) => u.type === 'infantry')!, g.unitsOf('axis')[0]];
     return g;
@@ -516,7 +523,7 @@ describe('line of sight', () => {
 
 describe('turn sequence', () => {
   it('only lets up to four ordered units act, in order, move then attack phases', () => {
-    const g = new Game(3);
+    const g = alliedGame(3);
     const units = g.unitsOf('allied');
     assert.equal(g.phase, 'orders');
     assert.equal(g.canMove(units[0]), false, 'nothing moves before orders');
@@ -531,7 +538,7 @@ describe('turn sequence', () => {
     assert.equal(g.toggleOrder(units[0]), false, 'orders are fixed after the order phase');
   });
   it('ends a unit\'s movement once another unit moves', () => {
-    const g = new Game(3);
+    const g = alliedGame(3);
     for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
     const [a, b] = g.unitsOf('allied').filter((u) => u.type === 'armour');
     g.units = [a, b, g.unitsOf('axis')[0]];
@@ -542,7 +549,7 @@ describe('turn sequence', () => {
     assert.equal(g.canMove(a), false);
   });
   it('allows attacks only in the attack phase, after movement ends', () => {
-    const g = new Game(3);
+    const g = alliedGame(3);
     for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
     const inf = g.unitsOf('allied').find((u) => u.type === 'infantry')!;
     const enemy = g.unitsOf('axis')[0];
@@ -557,9 +564,36 @@ describe('turn sequence', () => {
   });
 });
 
+describe('first side', () => {
+  it('follows the preset map, and is random on generated maps', () => {
+    const pegasus = new Game(1, PRESET_MAPS.find((m) => m.id === 'pegasus-bridge'));
+    assert.equal(pegasus.firstSide, 'allied');
+    assert.equal(pegasus.current, 'allied');
+    const firsts = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((seed) => new Game(seed).firstSide));
+    assert.deepEqual([...firsts].sort(), ['allied', 'axis']);
+    assert.equal(new Game(5).firstSide, new Game(5).firstSide, 'the same seed gives the same first side');
+    assert.throws(() => new Game(1, { ...PRESET_MAPS[0], firstSide: 'red' as never }), /firstSide/);
+  });
+  it('counts rounds from the first side, ending after the second side\'s last turn', () => {
+    const seed = [1, 2, 3, 4, 5, 6, 7, 8].find((s) => new Game(s).firstSide === 'axis')!;
+    const g = new Game(seed);
+    g.endTurn();
+    assert.equal(g.current, 'allied');
+    assert.equal(g.turn, 1);
+    g.endTurn();
+    assert.equal(g.current, 'axis');
+    assert.equal(g.turn, 2);
+    g.turn = MAX_TURNS;
+    g.endTurn();
+    assert.equal(g.winner, null, 'the Allies still get their last turn');
+    g.endTurn();
+    assert.notEqual(g.winner, null);
+  });
+});
+
 describe('turns and victory', () => {
   it('damaged units do not heal', () => {
-    const g = new Game(11);
+    const g = alliedGame(11);
     const u = g.unitsOf('allied')[0];
     u.hp = 1;
     g.endTurn();
@@ -567,7 +601,7 @@ describe('turns and victory', () => {
     assert.equal(u.hp, 1);
   });
   it('destroying the last enemy unit wins immediately', () => {
-    const g = new Game(11);
+    const g = alliedGame(11);
     const art = g.unitsOf('allied').find((u) => u.type === 'artillery')!;
     const last = g.unitsOf('axis')[0];
     g.units = g.units.filter((u) => u.side === 'allied' || u === last);

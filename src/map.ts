@@ -177,6 +177,8 @@ function isConnected(map: GameMap): boolean {
 export interface MapDef {
   id: string;
   name: string;
+  /** The side that takes the first turn. */
+  firstSide: Side;
   /** One string per row, top first: one letter per hex, separated by spaces (see MAP_LETTERS). */
   rows: string[];
   /** Starting units laid out like `rows` (see UNIT_LETTERS); omitted means the standard deployment. */
@@ -211,7 +213,7 @@ export const MAP_LETTERS: Record<string, Terrain> = {
   b: 'bridge',
 };
 
-export const PRESET_MAPS: MapDef[] = presetMaps;
+export const PRESET_MAPS = presetMaps as MapDef[];
 
 /** Split a hex grid into its letters, calling `cell` for each hex in reading order. */
 function readGrid(name: string, lines: string[], cell: (letter: string, h: Hex, row: number) => void): void {

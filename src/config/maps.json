@@ -2,6 +2,7 @@
   {
     "id": "pegasus-bridge",
     "name": "Pegasus Bridge",
+    "firstSide": "allied",
     "rows": [
       "v v . . r f f . . . . . .",
       " . . . r . f . . . . . .",
