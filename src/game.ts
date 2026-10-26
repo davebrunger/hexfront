@@ -24,6 +24,20 @@ export interface CombatResult {
   dmgToDefender: number;
   defenderDied: boolean;
   ranged: boolean;
+  /** Flags rolled; a surviving defender must retreat that many hexes (see `pendingRetreat`). */
+  flags: number;
+}
+
+/**
+ * A retreat still to be carried out after an attack. Its owner first decides how many of the
+ * `ignorable` flags to ignore (`ignoreFlags`), then picks each hex (`retreatOptions`, `retreatTo`).
+ */
+export interface PendingRetreat {
+  unit: Unit;
+  /** Hexes still to retreat. */
+  steps: number;
+  /** Flags the unit may still choose to ignore (from sandbags or terrain). */
+  ignorable: number;
 }
 
 /**
@@ -71,6 +85,8 @@ export class Game {
   /** The unit that moved last this phase; moving another unit ends its movement. */
   private lastMover: Unit | null = null;
   winner: Side | 'draw' | null = null;
+  /** A retreat that must be resolved before anything else happens. */
+  pendingRetreat: PendingRetreat | null = null;
   winReason = '';
   log: LogEntry[] = [];
   private nextId = 1;
@@ -179,7 +195,7 @@ export class Game {
 
   /** Whether `u` has something it can still do in the current phase. */
   isReady(u: Unit): boolean {
-    if (this.winner || u.side !== this.current) return false;
+    if (this.winner || this.pendingRetreat || u.side !== this.current) return false;
     if (this.phase === 'orders') return this.ordered.has(u.id) || this.ordered.size < ORDERS_PER_TURN;
     if (this.phase === 'move') return this.canMove(u);
     return this.attackTargets(u).length > 0 || this.canClearObstacle(u);
@@ -241,7 +257,9 @@ export class Game {
   /** Enemy units `u` could shoot at if it stood on `from` having moved `spaces` this turn. */
   targetsFrom(u: Unit, from: Hex, spaces: number): Unit[] {
     if (!this.mayAttackFrom(u, from, spaces)) return [];
-    const range = rangeOf(u.type);
+    // In close combat (next to an enemy) a unit may only attack the enemies next to it.
+    const closeCombat = this.units.some((e) => e.side !== u.side && distance(from, e.pos) === 1);
+    const range = closeCombat ? 1 : rangeOf(u.type);
     return this.units.filter(
       (e) =>
         e.side !== u.side &&
@@ -299,6 +317,7 @@ export class Game {
     const o = this.map.obstacles.get(key(u.pos));
     return (
       this.phase === 'attack' &&
+      !this.pendingRetreat &&
       this.isOrdered(u) &&
       o !== undefined &&
       OBSTACLES[o.kind].clearedInsteadOfAttackBy.includes(u.type) &&
@@ -318,7 +337,7 @@ export class Game {
 
   /** Enemies `u` can attack now: only ordered units, in the attack phase. */
   attackTargets(u: Unit): Unit[] {
-    if (this.phase !== 'attack' || !this.isOrdered(u)) return [];
+    if (this.phase !== 'attack' || !this.isOrdered(u) || this.pendingRetreat) return [];
     return this.targetsFrom(u, u.pos, this.spacesMoved(u));
   }
 
@@ -357,7 +376,16 @@ export class Game {
   forecast(att: Unit, def: Unit, attHex: Hex = att.pos): Forecast {
     const dice = this.diceFor(att, attHex, def);
     const p = hitChance(def.type);
-    return { dice, dealt: Math.min(dice * p, def.hp), killChance: atLeast(def.hp, dice, p) };
+    // Flags the defender can't retreat from cost it strength too.
+    const flag = DIE_FACES.filter((f) => f === 'flag').length / DIE_FACES.length;
+    const ignored = this.flagsIgnoredAt(def.pos);
+    let blocked = 0;
+    for (let k = 1; k <= dice; k++) {
+      const steps = Math.max(0, k - ignored);
+      const lost = steps - this.maxRetreat(def.side, def.pos, steps);
+      if (lost > 0) blocked += (atLeast(k, dice, flag) - atLeast(k + 1, dice, flag)) * lost;
+    }
+    return { dice, dealt: Math.min(dice * p + blocked, def.hp), killChance: atLeast(def.hp, dice, p) };
   }
 
   attack(att: Unit, def: Unit): CombatResult {
@@ -367,6 +395,7 @@ export class Game {
     def.hp -= dealt;
     att.attacked = true;
     att.mp = 0;
+    const flags = rolls.filter((f) => f === 'flag').length;
     const result: CombatResult = {
       attacker: att,
       defender: def,
@@ -374,6 +403,7 @@ export class Game {
       dmgToDefender: dealt,
       defenderDied: def.hp <= 0,
       ranged: distance(att.pos, def.pos) > 1,
+      flags,
     };
     const an = UNIT_SPECS[att.type].name;
     const dn = UNIT_SPECS[def.type].name;
@@ -383,7 +413,91 @@ export class Game {
     this.addLog(att.side, text);
     this.units = this.units.filter((u) => u.hp > 0);
     this.checkVictory();
+    // Retreats are resolved after hits and casualties.
+    if (!result.defenderDied && flags > 0 && !this.winner) this.startRetreat(def, flags);
     return result;
+  }
+
+  // --------------------------------------------------------------- retreats
+
+  /** `unit` must retreat one hex per flag (less any it chooses to ignore). */
+  startRetreat(unit: Unit, flags: number): void {
+    this.pendingRetreat = { unit, steps: flags, ignorable: Math.min(flags, this.flagsIgnoredAt(unit.pos)) };
+    this.advanceRetreat();
+  }
+
+  /** Flags a unit on `h` may ignore: the best of its terrain and obstacle. */
+  flagsIgnoredAt(h: Hex): number {
+    const o = this.map.obstacles.get(key(h));
+    return Math.max(TERRAIN[this.map.terrain(h) ?? 'plain'].flagsIgnored, o ? OBSTACLES[o.kind].flagsIgnored : 0);
+  }
+
+  /** The (up to two) hexes one step back towards a unit's baseline: down the map for the Allies, up for the Axis. */
+  private retreatSteps(side: Side, from: Hex): Hex[] {
+    const dr = side === 'allied' ? 1 : -1;
+    return neighbors(from).filter((n) => {
+      if (n.r - from.r !== dr) return false;
+      const t = this.map.terrain(n);
+      return t !== undefined && TERRAIN[t].passable && !this.unitAt(n);
+    });
+  }
+
+  /** The most of `steps` retreat moves a unit of `side` on `from` can make. Terrain and obstacles don't stop it. */
+  maxRetreat(side: Side, from: Hex, steps: number): number {
+    if (steps <= 0) return 0;
+    let best = 0;
+    for (const n of this.retreatSteps(side, from)) {
+      best = Math.max(best, 1 + this.maxRetreat(side, n, steps - 1));
+      if (best === steps) break;
+    }
+    return best;
+  }
+
+  /**
+   * Hexes the retreating unit may step to next: only those on a retreat that goes as far as
+   * possible. Empty while the owner still has to decide about ignoring flags.
+   */
+  retreatOptions(): Hex[] {
+    const pr = this.pendingRetreat;
+    if (!pr || pr.ignorable > 0) return [];
+    const { unit, steps } = pr;
+    const best = this.maxRetreat(unit.side, unit.pos, steps);
+    return this.retreatSteps(unit.side, unit.pos).filter((n) => 1 + this.maxRetreat(unit.side, n, steps - 1) === best);
+  }
+
+  /** The retreating unit's owner ignores `n` of the flags they may ignore (0 to retreat in full). */
+  ignoreFlags(n: number): void {
+    const pr = this.pendingRetreat;
+    if (!pr || n < 0 || n > pr.ignorable) throw new Error('Cannot ignore that many flags');
+    pr.steps -= n;
+    pr.ignorable = 0;
+    if (n) this.addLog(pr.unit.side, `${UNIT_SPECS[pr.unit.type].name} holds firm, ignoring ${n} flag${n > 1 ? 's' : ''}`);
+    this.advanceRetreat();
+  }
+
+  /** Retreat one hex to `h`, which must be one of `retreatOptions()`. */
+  retreatTo(h: Hex): void {
+    const pr = this.pendingRetreat;
+    if (!pr || !this.retreatOptions().some((o) => eq(o, h))) throw new Error('Illegal retreat');
+    const o = this.map.obstacles.get(key(pr.unit.pos));
+    if (o && OBSTACLES[o.kind].removedWhenLeft) this.map.obstacles.delete(key(pr.unit.pos));
+    pr.unit.pos = h;
+    pr.steps--;
+    this.advanceRetreat();
+  }
+
+  /** Finish the retreat when it's done, or take the hp loss for steps that can't be made. */
+  private advanceRetreat(): void {
+    const pr = this.pendingRetreat;
+    if (!pr || pr.ignorable > 0) return;
+    if (pr.steps > 0 && this.maxRetreat(pr.unit.side, pr.unit.pos, pr.steps) > 0) return;
+    this.pendingRetreat = null;
+    if (pr.steps === 0) return;
+    const name = UNIT_SPECS[pr.unit.type].name;
+    pr.unit.hp -= pr.steps;
+    this.addLog(pr.unit.side, `${name} cannot retreat and loses ${pr.steps} strength${pr.unit.hp <= 0 ? ` — ${name} destroyed!` : ''}`);
+    this.units = this.units.filter((u) => u.hp > 0);
+    this.checkVictory();
   }
 
   // ---------------------------------------------------------------- actions
@@ -416,7 +530,7 @@ export class Game {
   }
 
   endTurn(): void {
-    if (this.winner) return;
+    if (this.winner || this.pendingRetreat) return;
     if (this.current !== this.firstSide && this.turn >= MAX_TURNS) {
       this.decideByScore();
       return;

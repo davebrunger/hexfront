@@ -97,6 +97,8 @@ export interface TerrainInfo {
   high: boolean;
   /** 'blocks': any hex blocks line of sight; 'contiguous': two adjacent hexes on the line do. */
   sight: 'clear' | 'blocks' | 'contiguous';
+  /** Flags a unit here may choose to ignore each time it is attacked. */
+  flagsIgnored: number;
 }
 
 const dice = (infantry: number, armour: number, artillery: number) => ({ infantry, armour, artillery });
@@ -111,6 +113,7 @@ const OPEN = {
   attackPenalty: NONE,
   high: false,
   sight: 'clear',
+  flagsIgnored: 0,
 } as const;
 const COVER = { ...OPEN, stopsMove: true, noAttackAfterEntering: true, protection: dice(1, 2, 0), sight: 'blocks' } as const;
 const WATER = { ...OPEN, passable: false, land: false } as const;
@@ -139,6 +142,8 @@ export interface ObstacleInfo {
   clearedOnEntryBy: UnitType[];
   /** Unit types that may remove it instead of attacking, when standing on it and able to attack. */
   clearedInsteadOfAttackBy: UnitType[];
+  /** Flags a unit here may choose to ignore each time it is attacked. */
+  flagsIgnored: number;
 }
 
 export const OBSTACLES: Record<Obstacle['kind'], ObstacleInfo> = {
@@ -150,6 +155,7 @@ export const OBSTACLES: Record<Obstacle['kind'], ObstacleInfo> = {
     removedWhenLeft: true,
     clearedOnEntryBy: [],
     clearedInsteadOfAttackBy: [],
+    flagsIgnored: 1,
   },
   wire: {
     name: 'Barbed wire',
@@ -159,6 +165,7 @@ export const OBSTACLES: Record<Obstacle['kind'], ObstacleInfo> = {
     removedWhenLeft: false,
     clearedOnEntryBy: ['armour'],
     clearedInsteadOfAttackBy: ['infantry'],
+    flagsIgnored: 0,
   },
 };
 

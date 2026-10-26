@@ -425,6 +425,10 @@ export class Renderer {
     await sleep(380);
     d?.body.classList.remove('hit');
     if (res.defenderDied) this.float(dp, '✖', 'kill');
+    else if (res.flags) {
+      await sleep(200);
+      this.float(dp, '⚑'.repeat(res.flags), 'flag');
+    }
     await sleep(res.defenderDied ? 450 : 120);
   }
 

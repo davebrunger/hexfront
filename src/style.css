@@ -76,6 +76,9 @@ button {
 button:hover:not(:disabled) { background: #2d3743; border-color: #475567; }
 button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
+#retreat-prompt { margin: 6px 0 8px; padding: 8px 10px; border: 1px solid var(--gold); border-radius: 6px; font-size: 12.5px; }
+#retreat-prompt p { margin: 0 0 6px; }
+#retreat-prompt .buttons { display: flex; gap: 6px; }
 .new-game { display: grid; gap: 6px; }
 .new-game select {
   font: 500 13px var(--sans); color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px;
@@ -183,7 +186,7 @@ button.primary kbd { border-color: #2a1f0855; background: #2a1f0816; }
 @keyframes shake { 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
 
 .float { font: 800 17px var(--sans); text-anchor: middle; paint-order: stroke; stroke: #000; stroke-width: 3.5px; stroke-linejoin: round; animation: rise 1.2s ease-out forwards; }
-.float.dmg { fill: #ff6a55; } .float.kill { fill: #fff; font-size: 24px; }
+.float.dmg { fill: #ff6a55; } .float.kill { fill: #fff; font-size: 24px; } .float.flag { fill: #ffd54a; }
 @keyframes rise { from { transform: translateY(0); opacity: 1; } 70% { opacity: 1; } to { transform: translateY(-28px); opacity: 0; } }
 .tracer { stroke: #ffd66b; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 6 5; animation: fade 0.55s ease-out forwards; }
 .burst { fill: #ffb347; stroke: #fff3c0; stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: burst 0.5s ease-out forwards; }

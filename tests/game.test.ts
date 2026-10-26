@@ -4,7 +4,7 @@ import { applyAction, planAction } from '../src/ai';
 import { DIE_FACES, MAX_TURNS, TERRAIN, attackAt, dieHits, isRiver, rangeOf } from '../src/data';
 import { Game } from '../src/game';
 import { distance, eq, fromOffset, key, neighbors } from '../src/hex';
-import type { Obstacle, Terrain, Unit } from '../src/types';
+import type { Hex, Obstacle, Terrain, Unit } from '../src/types';
 import { MAP_HEIGHT, MAP_WIDTH, MAP_LETTERS, PRESET_MAPS, parseMap, parseUnits, rowWidth, type MapDef } from '../src/map';
 
 /** A new game with the Allies to move (random maps pick the first side at random). */
@@ -435,6 +435,24 @@ describe('obstacles', () => {
   });
 });
 
+describe('close combat', () => {
+  it('forces a unit next to an enemy to attack only adjacent enemies', () => {
+    const g = alliedGame(1);
+    for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
+    g.map.obstacles.clear();
+    const art = g.unitsOf('allied').find((u) => u.type === 'artillery')!;
+    const [near, far] = g.unitsOf('axis');
+    g.units = [art, near, far];
+    art.pos = fromOffset(5, 6);
+    far.pos = fromOffset(5, 3);
+    near.pos = fromOffset(0, 0);
+    readyFor(g, 'attack', art);
+    assert.deepEqual(g.attackTargets(art), [far], 'at range when nothing is adjacent');
+    near.pos = fromOffset(6, 6);
+    assert.deepEqual(g.attackTargets(art), [near], 'only the adjacent enemy');
+  });
+});
+
 describe('line of sight', () => {
   /** A game on an all-open board with just one unit per side, `from` attacking `to`. */
   function board(): Game {
@@ -561,6 +579,123 @@ describe('turn sequence', () => {
     assert.equal(g.phase, 'attack');
     assert.equal(g.canMove(inf), false, 'no moves during attacks');
     assert.deepEqual(g.attackTargets(inf), [enemy]);
+  });
+});
+
+describe('retreats', () => {
+  /** An open board with one Allied infantry (baseline: the bottom row) and one Axis infantry, Allies to move. */
+  function board() {
+    const g = alliedGame(1);
+    for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
+    g.map.obstacles.clear();
+    const inf = g.unitsOf('allied').find((u) => u.type === 'infantry')!;
+    const enemy = g.unitsOf('axis').find((u) => u.type === 'infantry')!;
+    g.units = [inf, enemy];
+    inf.pos = fromOffset(5, 4);
+    enemy.pos = fromOffset(5, 1);
+    return { g, inf, enemy };
+  }
+  const at = (col: number, row: number) => fromOffset(col, row);
+  const keys = (hs: Hex[]) => hs.map(key).sort();
+  const retreat = (g: Game, unit: Unit, steps: number) => g.startRetreat(unit, steps);
+
+  it('steps back towards the unit\'s own baseline', () => {
+    const { g, inf, enemy } = board();
+    retreat(g, inf, 1);
+    assert.deepEqual(keys(g.retreatOptions()), keys([at(4, 5), at(5, 5)]), 'Allies retreat down the map');
+    g.retreatTo(at(5, 5));
+    assert.equal(g.pendingRetreat, null);
+    retreat(g, enemy, 1);
+    assert.ok(g.retreatOptions().every((h) => h.r === 0), 'Axis retreat up the map');
+  });
+  it('ignores terrain and obstacles, but not impassable hexes or units', () => {
+    const { g, inf, enemy } = board();
+    g.map.tiles.set(key(at(4, 5)), 'forest');
+    g.map.obstacles.set(key(at(4, 6)), { kind: 'wire' });
+    g.map.tiles.set(key(at(5, 5)), 'water');
+    retreat(g, inf, 2);
+    assert.deepEqual(keys(g.retreatOptions()), keys([at(4, 5)]));
+    g.retreatTo(at(4, 5));
+    g.map.tiles.set(key(at(5, 6)), 'river');
+    assert.deepEqual(keys(g.retreatOptions()), keys([at(4, 6)]), 'through forest and onto wire');
+    g.retreatTo(at(4, 6));
+    assert.equal(g.pendingRetreat, null);
+    assert.ok(g.map.obstacles.has(key(at(4, 6))), 'the wire stays');
+    enemy.pos = at(4, 7);
+    g.map.tiles.set(key(at(3, 7)), 'water');
+    const hp = inf.hp;
+    retreat(g, inf, 1);
+    assert.equal(g.pendingRetreat, null, 'blocked at once');
+    assert.equal(inf.hp, hp - 1);
+  });
+  it('loses strength for each step it cannot take, going as far as it can', () => {
+    const { g, inf } = board();
+    inf.pos = at(5, 7);
+    retreat(g, inf, 3);
+    assert.equal(g.retreatOptions().length, 2);
+    g.retreatTo(at(5, 8));
+    assert.equal(g.pendingRetreat, null, 'off the baseline: the rest is lost');
+    assert.equal(inf.hp, 2);
+    retreat(g, inf, 2);
+    assert.equal(g.units.includes(inf), false, 'destroyed by hp loss');
+  });
+  it('only offers hexes on a full retreat when one exists', () => {
+    const { g, inf } = board();
+    // From (5,4): (4,5) leads on to open hexes, (5,5) is boxed in behind.
+    g.map.tiles.set(key(at(5, 6)), 'water');
+    g.map.tiles.set(key(at(6, 6)), 'water');
+    retreat(g, inf, 2);
+    assert.deepEqual(keys(g.retreatOptions()), keys([at(4, 5)]));
+  });
+  it('lets a unit on sandbags choose to ignore a flag, and removes them if it leaves', () => {
+    const { g, inf } = board();
+    g.map.obstacles.set(key(inf.pos), { kind: 'sandbags', facing: 0 });
+    retreat(g, inf, 2);
+    assert.equal(g.pendingRetreat!.ignorable, 1);
+    assert.deepEqual(g.retreatOptions(), [], 'must decide about the flag first');
+    g.ignoreFlags(1);
+    assert.equal(g.pendingRetreat!.steps, 1);
+    g.retreatTo(g.retreatOptions()[0]);
+    assert.equal(g.map.obstacles.size, 0);
+    g.map.obstacles.set(key(inf.pos), { kind: 'sandbags', facing: 0 });
+    const pos = inf.pos;
+    retreat(g, inf, 1);
+    g.ignoreFlags(1);
+    assert.equal(g.pendingRetreat, null);
+    assert.ok(eq(inf.pos, pos), 'held firm');
+  });
+  it('is triggered by flags in an attack, and blocks play until resolved', () => {
+    const { g, inf, enemy } = board();
+    enemy.pos = at(5, 3);
+    readyFor(g, 'attack', inf);
+    let flagged = false;
+    for (let i = 0; i < 200 && !flagged && !g.winner; i++) {
+      inf.attacked = false;
+      enemy.hp = 4;
+      enemy.pos = at(5, 3);
+      const res = g.attack(inf, enemy);
+      if (res.flags && !res.defenderDied && g.pendingRetreat) {
+        flagged = true;
+        assert.equal(g.pendingRetreat.unit, enemy);
+        assert.equal(g.pendingRetreat.steps, res.flags);
+        assert.deepEqual(g.attackTargets(inf), []);
+        g.endTurn();
+        assert.equal(g.current, 'allied', 'cannot end the turn mid-retreat');
+      }
+      while (g.pendingRetreat) g.retreatTo(g.retreatOptions()[0]);
+    }
+    assert.ok(flagged, 'a flag came up');
+  });
+  it('counts unretreatable flags in the forecast', () => {
+    const { g, inf, enemy } = board();
+    enemy.pos = at(5, 3);
+    readyFor(g, 'attack', inf);
+    const open = g.forecast(inf, enemy).dealt;
+    // The same adjacent attack, but with the enemy on its own baseline (the top row).
+    inf.pos = at(5, 1);
+    enemy.pos = at(5, 0);
+    const cornered = g.forecast(inf, enemy).dealt;
+    assert.ok(cornered > open, `${cornered} > ${open}`);
   });
 });
 

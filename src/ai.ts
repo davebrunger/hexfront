@@ -84,10 +84,35 @@ export function applyAction(game: Game, action: AIAction): void {
       return game.endMovement();
     case 'attack':
       game.attack(action.unit, action.target);
+      resolveRetreat(game);
       return;
     case 'clear':
       return game.clearObstacle(action.unit);
   }
+}
+
+/** Settle any pending retreat with the AI deciding for the retreating unit (used when both sides are AI). */
+export function resolveRetreat(game: Game): void {
+  while (game.pendingRetreat) {
+    if (game.pendingRetreat.ignorable > 0) game.ignoreFlags(flagsToIgnore(game));
+    else game.retreatTo(retreatHex(game));
+  }
+}
+
+/** Flags the AI ignores for its retreating unit: all it can, keeping the protection it has there. */
+export function flagsToIgnore(game: Game): number {
+  return game.pendingRetreat?.ignorable ?? 0;
+}
+
+/** Where the AI's retreating unit steps next: the option where it is in least danger, then in best cover. */
+export function retreatHex(game: Game): Hex {
+  const unit = game.pendingRetreat!.unit;
+  const enemies = game.unitsOf(other(unit.side));
+  const safety = (h: Hex) => {
+    const cover = TERRAIN[game.map.terrain(h)!].protection;
+    return -danger(game, unit, h, enemies) + (cover.infantry + cover.armour) / 4;
+  };
+  return game.retreatOptions().reduce((a, b) => (safety(b) > safety(a) ? b : a));
 }
 
 /** Expected damage plus a bonus for the chance of destroying the target. */
