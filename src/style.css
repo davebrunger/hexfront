@@ -119,6 +119,21 @@ button.primary kbd { border-color: #2a1f0855; background: #2a1f0816; }
 #banner.allied { border-color: var(--allied); } #banner.axis { border-color: var(--axis); }
 #banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 
+/* -------------------------------------------------------------- dice tray */
+#dice-tray {
+  position: absolute; left: 50%; top: 80%; transform: translate(-50%, -50%) translateY(8px); opacity: 0; pointer-events: none;
+  padding: 10px 14px 12px; background: #000c; border-radius: 10px; border: 1px solid #fff3; text-align: center;
+  transition: opacity 0.2s, transform 0.2s; white-space: nowrap;
+}
+#dice-tray.show { opacity: 1; transform: translate(-50%, -50%); }
+#dice-tray .title { font: 600 12px var(--sans); color: var(--ink); margin-bottom: 8px; letter-spacing: 0.04em; }
+#dice-tray .dice { display: flex; gap: 8px; justify-content: center; }
+.die { width: 42px; height: 42px; border-radius: 8px; background: #f3ecd9; border: 3px solid #f3ecd9; box-shadow: 0 2px 4px #0008; }
+.die svg { width: 100%; height: 100%; display: block; }
+.die.hit { border-color: #63d35a; }
+.die.flag { border-color: #ffd54a; }
+.die.miss { opacity: 0.45; }
+
 /* ---------------------------------------------------------------- overlay */
 #overlay { position: fixed; inset: 0; background: #000b; display: grid; place-items: center; z-index: 10; backdrop-filter: blur(2px); }
 #overlay[hidden] { display: none; }

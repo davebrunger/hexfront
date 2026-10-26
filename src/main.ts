@@ -1,7 +1,7 @@
 import './style.css';
 import { flagsToIgnore, planAction, retreatHex, shouldTakeGround, type AIAction } from './ai';
-import { MAX_TURNS, OBSTACLES, ORDERS_PER_TURN, SIDE_NAMES, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
-import { Game, other } from './game';
+import { DIE_LABELS, MAX_TURNS, OBSTACLES, ORDERS_PER_TURN, SIDE_NAMES, TERRAIN, UNIT_SPECS, dieHits, hpFrac, rangeOf, type DieFace } from './data';
+import { Game, other, type CombatResult } from './game';
 import { PRESET_MAPS } from './map';
 import { eq, key } from './hex';
 import { EMPTY_OVERLAY, Renderer, sleep, type Overlay } from './render';
@@ -159,12 +159,19 @@ async function settlePending(): Promise<void> {
   while ((game.pendingRetreat || game.pendingAdvance) && !game.winner) {
     const pa = game.pendingAdvance;
     if (pa) {
+      const name = UNIT_SPECS[pa.unit.type].name;
+      if (pa.unit.side === human) banner('Take ground?', pa.unit.side);
       const advance =
         pa.unit.side === human ? ((await askRetreat()) as { advance: boolean }).advance : shouldTakeGround(game);
       game.takeGround(advance);
       if (advance) {
+        if (pa.unit.side !== human) banner(`${name} takes ground`, pa.unit.side);
         renderer.update(EMPTY_OVERLAY);
         await renderer.animateMove(pa.unit, [pa.to]);
+        if (game.overrunUnit === pa.unit) {
+          banner('Overrun!', pa.unit.side);
+          await sleep(700);
+        }
       }
       continue;
     }
@@ -329,9 +336,48 @@ async function doAttack(u: Unit, target: Unit): Promise<void> {
   busy = true;
   renderer.update(EMPTY_OVERLAY);
   const res = game.attack(u, target);
+  showDice(res);
   await renderer.animateCombat(res);
+  if (res.flags && !res.defenderDied) {
+    // A retreat with nowhere to go is settled at once, with strength lost instead.
+    const steps = game.pendingRetreat?.steps ?? 0;
+    banner(steps ? `Retreat ${steps} hex${steps > 1 ? 'es' : ''}` : 'Retreat blocked', res.defender.side);
+    await sleep(700);
+  }
   await settlePending();
   busy = false;
+}
+
+// -------------------------------------------------------------- dice tray
+
+/** Small icons for each die face, drawn in a 40x40 box. */
+const DIE_ICONS: Record<DieFace, string> = {
+  infantry: '<rect x="8" y="12" width="24" height="16" fill="none" stroke="#1c1c1c" stroke-width="2"/><path d="M8 12 L32 28 M32 12 L8 28" stroke="#1c1c1c" stroke-width="2"/>',
+  armour: '<rect x="8" y="12" width="24" height="16" fill="none" stroke="#1c1c1c" stroke-width="2"/><ellipse cx="20" cy="20" rx="8" ry="4.5" fill="none" stroke="#1c1c1c" stroke-width="2"/>',
+  grenade:
+    '<circle cx="20" cy="23" r="9" fill="#3d4a2a"/><path d="M14 20 h12 M14 26 h12 M20 14 v18" stroke="#2a3320" stroke-width="1.2"/><rect x="17" y="9" width="6" height="5" rx="1" fill="#555"/><path d="M23 11 q6 -3 7 3" fill="none" stroke="#555" stroke-width="1.8"/>',
+  flag: '<path d="M13 8 V33" stroke="#4b3621" stroke-width="2.4" stroke-linecap="round"/><path d="M14 9 L31 14 L14 20 Z" fill="#c8322a" stroke="#7a1d18" stroke-width="1"/>',
+  star: '<path d="M20 8 L23.5 16 L32 16.5 L25.5 22 L27.5 30.5 L20 26 L12.5 30.5 L14.5 22 L8 16.5 L16.5 16 Z" fill="#c9a227" stroke="#7a611a" stroke-width="1"/>',
+};
+
+let diceTimer = 0;
+/** Flash the dice an attack rolled: hits ringed green, flags gold, the rest faded. */
+function showDice(res: CombatResult): void {
+  const tray = $('dice-tray');
+  const an = UNIT_SPECS[res.attacker.type].name;
+  const dn = UNIT_SPECS[res.defender.type].name;
+  const parts = [`${res.dmgToDefender} hit${res.dmgToDefender === 1 ? '' : 's'}`];
+  if (res.flags) parts.push(`${res.flags} flag${res.flags === 1 ? '' : 's'}`);
+  const dice = res.rolls
+    .map((f) => {
+      const cls = dieHits(f, res.defender.type) ? 'hit' : f === 'flag' ? 'flag' : 'miss';
+      return `<div class="die ${cls}" title="${DIE_LABELS[f]}"><svg viewBox="0 0 40 40">${DIE_ICONS[f]}</svg></div>`;
+    })
+    .join('');
+  tray.innerHTML = `<div class="title">${SIDE_NAMES[res.attacker.side]} ${an} attacks ${dn} · ${parts.join(', ')}</div><div class="dice">${dice}</div>`;
+  tray.className = 'show';
+  clearTimeout(diceTimer);
+  diceTimer = window.setTimeout(() => (tray.className = ''), 2600);
 }
 
 /** Carry out an AI action with the same animations a player's actions get. Returns whether anything visible happened. */
