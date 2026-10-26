@@ -453,6 +453,121 @@ describe('close combat', () => {
   });
 });
 
+describe('taking ground and overruns', () => {
+  /** An open board with the given Allied units and Axis infantry, Allies attacking. */
+  function board(...types: ('infantry' | 'armour' | 'artillery')[]) {
+    const g = alliedGame(1);
+    for (const h of g.map.hexes) g.map.tiles.set(key(h), 'plain');
+    g.map.obstacles.clear();
+    const pool = [...g.unitsOf('allied')];
+    const mine = types.map((t) => pool.splice(pool.findIndex((u) => u.type === t), 1)[0]);
+    const [e1, e2, spare] = g.unitsOf('axis').filter((u) => u.type === 'infantry');
+    g.units = [...mine, e1, e2, spare];
+    mine.forEach((u, i) => (u.pos = fromOffset(2 + i * 4, 6)));
+    e1.pos = fromOffset(2, 5);
+    e2.pos = fromOffset(10, 1);
+    spare.pos = fromOffset(12, 0); // so destroying e1 and e2 doesn't end the game
+    readyFor(g, 'attack', ...mine);
+    return { g, mine, e1, e2 };
+  }
+  /** Attack until `def` is destroyed, leaving the take-ground decision pending. */
+  function winCloseCombat(g: Game, att: Unit, def: Unit): Hex {
+    const hex = def.pos;
+    for (let i = 0; i < 300; i++) {
+      att.attacked = false;
+      def.hp = 1;
+      def.pos = hex;
+      g.attack(att, def);
+      while (g.pendingRetreat) g.retreatTo(g.retreatOptions()[0]);
+      if (!g.units.includes(def)) return hex;
+      if (g.pendingAdvance) g.takeGround(false); // it retreated instead: try again
+    }
+    throw new Error('never won');
+  }
+
+  it('lets the winner of a close combat advance into the vacated hex', () => {
+    const { g, mine, e1 } = board('infantry');
+    const hex = winCloseCombat(g, mine[0], e1);
+    assert.equal(g.pendingAdvance!.unit, mine[0]);
+    assert.deepEqual(g.attackTargets(mine[0]), [], 'nothing else happens until decided');
+    g.takeGround(true);
+    assert.ok(eq(mine[0].pos, hex));
+    assert.equal(g.overrunUnit, null, 'only armour overruns');
+  });
+  it('is not offered after ranged attacks, to artillery, or to a unit stopped by terrain', () => {
+    const ranged = board('infantry');
+    ranged.e1.pos = fromOffset(2, 4);
+    winCloseCombatOrNot(ranged.g, ranged.mine[0], ranged.e1);
+    const art = board('artillery');
+    winCloseCombatOrNot(art.g, art.mine[0], art.e1);
+    const halted = board('infantry');
+    halted.mine[0].halted = true;
+    winCloseCombatOrNot(halted.g, halted.mine[0], halted.e1);
+  });
+  /** Destroy `def` and check no take-ground is offered. */
+  function winCloseCombatOrNot(g: Game, att: Unit, def: Unit): void {
+    for (let i = 0; i < 300 && g.units.includes(def); i++) {
+      att.attacked = false;
+      def.hp = 1;
+      g.attack(att, def);
+      while (g.pendingRetreat) g.retreatTo(g.retreatOptions()[0]);
+      assert.equal(g.pendingAdvance, null);
+    }
+  }
+  it('lets armour that takes ground overrun once, at any target, and take ground again', () => {
+    const { g, mine, e1, e2 } = board('armour');
+    const arm = mine[0];
+    winCloseCombat(g, arm, e1);
+    g.takeGround(true);
+    assert.equal(g.overrunUnit, arm);
+    e2.pos = fromOffset(3, 3);
+    assert.deepEqual(g.attackTargets(arm), [e2], 'a second attack, at range');
+    e2.pos = fromOffset(2, 4);
+    winCloseCombat(g, arm, e2);
+    g.takeGround(true);
+    assert.equal(g.overrunUnit, null, 'only one overrun a turn');
+    assert.equal(arm.attacked, true);
+  });
+  it('gives up the overrun if another unit attacks first', () => {
+    const { g, mine, e1, e2 } = board('armour', 'infantry');
+    const [arm, inf] = mine;
+    winCloseCombat(g, arm, e1);
+    g.takeGround(true);
+    e2.pos = fromOffset(6, 5);
+    g.attack(inf, e2);
+    while (g.pendingRetreat) g.retreatTo(g.retreatOptions()[0]);
+    if (g.pendingAdvance) g.takeGround(false);
+    assert.equal(arm.attacked, true);
+    assert.deepEqual(g.attackTargets(arm), []);
+  });
+  it('also takes ground after driving the enemy back', () => {
+    const { g, mine, e1 } = board('infantry');
+    const hex = e1.pos;
+    for (let i = 0; i < 300 && !g.pendingAdvance; i++) {
+      mine[0].attacked = false;
+      e1.hp = 4;
+      e1.pos = hex;
+      g.attack(mine[0], e1);
+      while (g.pendingRetreat) g.retreatTo(g.retreatOptions()[0]);
+    }
+    assert.ok(g.units.includes(e1) && !eq(e1.pos, hex), 'the enemy retreated');
+    assert.ok(eq(g.pendingAdvance!.to, hex));
+  });
+  it('applies terrain to the advance: forest halts the unit, wire is cleared by armour', () => {
+    const forest = board('infantry');
+    forest.g.map.tiles.set(key(forest.e1.pos), 'forest');
+    winCloseCombat(forest.g, forest.mine[0], forest.e1);
+    forest.g.takeGround(true);
+    assert.equal(forest.mine[0].halted, true, 'so it cannot take ground again this turn');
+    const wire = board('armour');
+    wire.g.map.obstacles.set(key(wire.e1.pos), { kind: 'wire' });
+    winCloseCombat(wire.g, wire.mine[0], wire.e1);
+    wire.g.takeGround(true);
+    assert.equal(wire.g.map.obstacles.size, 0);
+    assert.equal(wire.g.overrunUnit, wire.mine[0], 'armour may still attack after clearing wire');
+  });
+});
+
 describe('line of sight', () => {
   /** A game on an all-open board with just one unit per side, `from` attacking `to`. */
   function board(): Game {

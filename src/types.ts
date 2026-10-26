@@ -26,6 +26,10 @@ export interface Unit {
   /** Spaces moved so far this turn. */
   spaces: number;
   attacked: boolean;
+  /** Its movement was stopped by terrain or an obstacle this turn, so it can't take ground. */
+  halted: boolean;
+  /** Armour only: it has made its overrun attack this turn. */
+  overran: boolean;
   /** Bookkeeping flag for the AI planner: unit has already been handled this turn. */
   done: boolean;
 }

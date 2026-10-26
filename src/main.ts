@@ -1,5 +1,5 @@
 import './style.css';
-import { flagsToIgnore, planAction, retreatHex, type AIAction } from './ai';
+import { flagsToIgnore, planAction, retreatHex, shouldTakeGround, type AIAction } from './ai';
 import { MAX_TURNS, OBSTACLES, ORDERS_PER_TURN, SIDE_NAMES, TERRAIN, UNIT_SPECS, hpFrac, rangeOf } from './data';
 import { Game, other } from './game';
 import { PRESET_MAPS } from './map';
@@ -71,6 +71,11 @@ function overlayState(path: Hex[] = []): Overlay {
     const moves = game.retreatOptions().map((hex) => ({ hex, canAttack: true }));
     return { selected: retreat.unit.pos, moves, targets: [], path: [] };
   }
+  const advance = game.pendingAdvance;
+  if (advance) {
+    if (advance.unit.side !== human || !retreatDecision) return EMPTY_OVERLAY;
+    return { selected: advance.unit.pos, moves: [{ hex: advance.to, canAttack: true }], targets: [], path: [] };
+  }
   if (game.winner || game.current !== human) return EMPTY_OVERLAY;
   if (!selected || selected.side !== human) return EMPTY_OVERLAY;
   const targets = game.attackTargets(selected).map((t) => ({ hex: t.pos, ...game.forecast(selected!, t) }));
@@ -108,13 +113,22 @@ function phaseBanner(): void {
 
 // ---------------------------------------------------------------- retreats
 
-type RetreatDecision = { ignore: number } | { hex: Hex };
-/** Set while waiting for the player to decide about one of their units' retreat. */
+type RetreatDecision = { ignore: number } | { hex: Hex } | { advance: boolean };
+/** Set while waiting for the player to decide about one of their units' retreat or advance. */
 let retreatDecision: ((d: RetreatDecision) => void) | null = null;
 
 function renderRetreatPrompt(): void {
   const box = $('retreat-prompt');
   const pr = game.pendingRetreat;
+  const pa = game.pendingAdvance;
+  if (pa && pa.unit.side === human && retreatDecision) {
+    box.hidden = false;
+    const name = UNIT_SPECS[pa.unit.type].name;
+    const overrun = pa.unit.type === 'armour' && !pa.unit.overran ? ' and may then attack again (overrun)' : '';
+    box.innerHTML = `<p>Your ${name} may take ground: advance into the hex it cleared${overrun}.</p>
+      <div class="buttons"><button type="button" data-advance="1">Take ground</button><button type="button" data-advance="0">Stay</button></div>`;
+    return;
+  }
   if (!pr || pr.unit.side !== human || !retreatDecision) {
     box.hidden = true;
     return;
@@ -140,10 +154,21 @@ function askRetreat(): Promise<RetreatDecision> {
   });
 }
 
-/** Carry out a pending retreat: the player decides for their own units, the AI for its own. */
-async function settleRetreat(): Promise<void> {
-  while (game.pendingRetreat && !game.winner) {
-    const pr = game.pendingRetreat;
+/** Carry out pending retreats and take-ground: the player decides for their own units, the AI for its own. */
+async function settlePending(): Promise<void> {
+  while ((game.pendingRetreat || game.pendingAdvance) && !game.winner) {
+    const pa = game.pendingAdvance;
+    if (pa) {
+      const advance =
+        pa.unit.side === human ? ((await askRetreat()) as { advance: boolean }).advance : shouldTakeGround(game);
+      game.takeGround(advance);
+      if (advance) {
+        renderer.update(EMPTY_OVERLAY);
+        await renderer.animateMove(pa.unit, [pa.to]);
+      }
+      continue;
+    }
+    const pr = game.pendingRetreat!;
     const options = game.retreatOptions();
     if (pr.ignorable > 0) {
       const n = pr.unit.side === human ? ((await askRetreat()) as { ignore: number }).ignore : flagsToIgnore(game);
@@ -182,7 +207,7 @@ function renderPanel(): void {
   $('forces').textContent = `${game.unitsOf(human).length} v ${game.unitsOf(aiSide()).length}`;
   $('score').textContent = `${game.score(human)} v ${game.score(aiSide())}`;
   const button = $('end-turn') as HTMLButtonElement;
-  button.disabled = !mine || busy || !!game.winner || !!game.pendingRetreat;
+  button.disabled = !mine || busy || !!game.winner || !!game.pendingRetreat || !!game.pendingAdvance;
   renderRetreatPrompt();
   const label = { orders: 'Confirm orders', move: 'End movement', attack: 'End turn' }[game.phase];
   button.innerHTML = `${label} <kbd>Space</kbd>`;
@@ -192,7 +217,9 @@ function renderPanel(): void {
       ? `Orders: click up to ${ORDERS_PER_TURN} units to order them (${game.ordered.size}/${ORDERS_PER_TURN}).`
       : game.phase === 'move'
         ? 'Movement: move your ordered units one at a time. Moving another unit ends the last one\'s move.'
-        : 'Attack: attack with your ordered units, one at a time.';
+        : game.overrunUnit?.side === human && game.attackTargets(game.overrunUnit).length
+          ? 'Overrun: your armour took ground and may attack again. Attacking with another unit gives this up.'
+          : 'Attack: attack with your ordered units, one at a time.';
 
   renderInspect();
   renderLog();
@@ -303,7 +330,7 @@ async function doAttack(u: Unit, target: Unit): Promise<void> {
   renderer.update(EMPTY_OVERLAY);
   const res = game.attack(u, target);
   await renderer.animateCombat(res);
-  await settleRetreat();
+  await settlePending();
   busy = false;
 }
 
@@ -404,7 +431,8 @@ async function endTurn(): Promise<void> {
 
 async function onHexClick(h: Hex): Promise<void> {
   if (retreatDecision) {
-    if (game.retreatOptions().some((o) => eq(o, h))) retreatDecision({ hex: h });
+    if (game.pendingAdvance && eq(game.pendingAdvance.to, h)) retreatDecision({ advance: true });
+    else if (game.retreatOptions().some((o) => eq(o, h))) retreatDecision({ hex: h });
     return;
   }
   if (busy || game.winner || game.current !== human) return;
@@ -419,7 +447,8 @@ async function onHexClick(h: Hex): Promise<void> {
     const u = selected;
     if (clicked && clicked.side !== human && game.attackTargets(u).includes(clicked)) {
       await doAttack(u, clicked);
-      selected = null;
+      // Armour that took ground stays selected for its overrun.
+      selected = game.overrunUnit === u && game.attackTargets(u).length ? u : null;
       refresh();
       checkGameOver();
       return;
@@ -472,8 +501,10 @@ $('new-game').addEventListener('click', () => {
 });
 $('overlay-new').addEventListener('click', startChosenGame);
 $('retreat-prompt').addEventListener('click', (e) => {
-  const button = (e.target as Element).closest<HTMLButtonElement>('button[data-ignore]');
-  if (button && retreatDecision) retreatDecision({ ignore: Number(button.dataset.ignore) });
+  const button = (e.target as Element).closest<HTMLButtonElement>('button[data-ignore], button[data-advance]');
+  if (!button || !retreatDecision) return;
+  if (button.dataset.advance !== undefined) retreatDecision({ advance: button.dataset.advance === '1' });
+  else retreatDecision({ ignore: Number(button.dataset.ignore) });
 });
 $('inspect').addEventListener('click', (e) => {
   if ((e.target as Element).closest('#clear-obstacle')) clearSelectedObstacle();

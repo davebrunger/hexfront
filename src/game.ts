@@ -32,6 +32,12 @@ export interface CombatResult {
  * A retreat still to be carried out after an attack. Its owner first decides how many of the
  * `ignorable` flags to ignore (`ignoreFlags`), then picks each hex (`retreatOptions`, `retreatTo`).
  */
+/** A unit that won a close combat and may take ground by advancing into `to` (see `takeGround`). */
+export interface PendingAdvance {
+  unit: Unit;
+  to: Hex;
+}
+
 export interface PendingRetreat {
   unit: Unit;
   /** Hexes still to retreat. */
@@ -87,6 +93,12 @@ export class Game {
   winner: Side | 'draw' | null = null;
   /** A retreat that must be resolved before anything else happens. */
   pendingRetreat: PendingRetreat | null = null;
+  /** A take-ground decision that must be made before anything else happens. */
+  pendingAdvance: PendingAdvance | null = null;
+  /** Armour that took ground and may still make its overrun attack; attacking with another unit gives it up. */
+  overrunUnit: Unit | null = null;
+  /** The close combat attack just made, for taking ground once its retreat is settled. */
+  private closeCombat: PendingAdvance | null = null;
   winReason = '';
   log: LogEntry[] = [];
   private nextId = 1;
@@ -151,9 +163,14 @@ export class Game {
 
   /** Entering `h` ends movement: forest, villages, wire, or next to an enemy. */
   stopsMovement(side: Side, h: Hex): boolean {
+    return this.terrainStops(h) || this.inEnemyZoc(side, h);
+  }
+
+  /** Terrain or an obstacle on `h` stops a unit entering it (forest, villages, wire). */
+  private terrainStops(h: Hex): boolean {
     const t = this.map.terrain(h);
     const o = this.map.obstacles.get(key(h));
-    return (t !== undefined && TERRAIN[t].stopsMove) || (o !== undefined && OBSTACLES[o.kind].stopsMove) || this.inEnemyZoc(side, h);
+    return (t !== undefined && TERRAIN[t].stopsMove) || (o !== undefined && OBSTACLES[o.kind].stopsMove);
   }
 
   // ---------------------------------------------------------------- phases
@@ -195,7 +212,7 @@ export class Game {
 
   /** Whether `u` has something it can still do in the current phase. */
   isReady(u: Unit): boolean {
-    if (this.winner || this.pendingRetreat || u.side !== this.current) return false;
+    if (this.winner || this.pendingRetreat || this.pendingAdvance || u.side !== this.current) return false;
     if (this.phase === 'orders') return this.ordered.has(u.id) || this.ordered.size < ORDERS_PER_TURN;
     if (this.phase === 'move') return this.canMove(u);
     return this.attackTargets(u).length > 0 || this.canClearObstacle(u);
@@ -318,6 +335,7 @@ export class Game {
     return (
       this.phase === 'attack' &&
       !this.pendingRetreat &&
+      !this.pendingAdvance &&
       this.isOrdered(u) &&
       o !== undefined &&
       OBSTACLES[o.kind].clearedInsteadOfAttackBy.includes(u.type) &&
@@ -328,6 +346,7 @@ export class Game {
   /** Clear the obstacle `u` stands on; this uses up its attack for the turn. */
   clearObstacle(u: Unit): void {
     if (!this.canClearObstacle(u)) throw new Error('Cannot clear obstacle');
+    this.forfeitOverrun(u);
     const o = this.map.obstacles.get(key(u.pos))!;
     this.map.obstacles.delete(key(u.pos));
     u.attacked = true;
@@ -337,7 +356,7 @@ export class Game {
 
   /** Enemies `u` can attack now: only ordered units, in the attack phase. */
   attackTargets(u: Unit): Unit[] {
-    if (this.phase !== 'attack' || !this.isOrdered(u) || this.pendingRetreat) return [];
+    if (this.phase !== 'attack' || !this.isOrdered(u) || this.pendingRetreat || this.pendingAdvance) return [];
     return this.targetsFrom(u, u.pos, this.spacesMoved(u));
   }
 
@@ -390,6 +409,8 @@ export class Game {
 
   attack(att: Unit, def: Unit): CombatResult {
     if (!this.attackTargets(att).includes(def)) throw new Error('Illegal attack');
+    this.forfeitOverrun(att);
+    const defHex = def.pos;
     const rolls = Array.from({ length: this.diceFor(att, att.pos, def) }, () => DIE_FACES[Math.floor(this.rng() * DIE_FACES.length)]);
     const dealt = Math.min(rolls.filter((f) => dieHits(f, def.type)).length, def.hp);
     def.hp -= dealt;
@@ -414,8 +435,55 @@ export class Game {
     this.units = this.units.filter((u) => u.hp > 0);
     this.checkVictory();
     // Retreats are resolved after hits and casualties.
+    // A successful close combat lets the attacker take ground, once any retreat is settled.
+    this.closeCombat = distance(att.pos, defHex) === 1 ? { unit: att, to: defHex } : null;
     if (!result.defenderDied && flags > 0 && !this.winner) this.startRetreat(def, flags);
+    if (!this.pendingRetreat) this.offerAdvance();
     return result;
+  }
+
+  // ----------------------------------------------------------- taking ground
+
+  /** After a close combat attack, offer to take ground if the target's hex is now empty. */
+  private offerAdvance(): void {
+    const cc = this.closeCombat;
+    this.closeCombat = null;
+    if (!cc || this.winner || !this.units.includes(cc.unit)) return;
+    const { unit, to } = cc;
+    if (unit.type === 'artillery' || unit.halted || this.unitAt(to)) return;
+    this.pendingAdvance = { unit, to };
+  }
+
+  /**
+   * Decide on a pending take-ground: advance into the vacated hex, or stay. Terrain applies as if
+   * moving in: forest, villages and wire stop the unit (no taking ground again), and armour clears
+   * wire. Armour that advances may then make one overrun attack, unless its new hex forbids attacking.
+   */
+  takeGround(advance: boolean): void {
+    const pa = this.pendingAdvance;
+    if (!pa) throw new Error('No ground to take');
+    this.pendingAdvance = null;
+    if (!advance) return;
+    const { unit, to } = pa;
+    const name = UNIT_SPECS[unit.type].name;
+    const left = this.map.obstacles.get(key(unit.pos));
+    if (left && OBSTACLES[left.kind].removedWhenLeft) this.map.obstacles.delete(key(unit.pos));
+    unit.pos = to;
+    unit.halted = this.terrainStops(to);
+    const o = this.map.obstacles.get(key(to));
+    if (o && OBSTACLES[o.kind].clearedOnEntryBy.includes(unit.type)) this.map.obstacles.delete(key(to));
+    this.addLog(unit.side, `${name} takes ground`);
+    if (unit.type === 'armour' && !unit.overran && !TERRAIN[this.map.terrain(to)!].noAttackAfterEntering) {
+      unit.overran = true;
+      unit.attacked = false;
+      this.overrunUnit = unit;
+    }
+  }
+
+  /** Any other unit acting gives up an overrun that hasn't been made yet. */
+  private forfeitOverrun(acting: Unit): void {
+    if (this.overrunUnit && this.overrunUnit !== acting) this.overrunUnit.attacked = true;
+    this.overrunUnit = null;
   }
 
   // --------------------------------------------------------------- retreats
@@ -492,12 +560,14 @@ export class Game {
     if (!pr || pr.ignorable > 0) return;
     if (pr.steps > 0 && this.maxRetreat(pr.unit.side, pr.unit.pos, pr.steps) > 0) return;
     this.pendingRetreat = null;
-    if (pr.steps === 0) return;
-    const name = UNIT_SPECS[pr.unit.type].name;
-    pr.unit.hp -= pr.steps;
-    this.addLog(pr.unit.side, `${name} cannot retreat and loses ${pr.steps} strength${pr.unit.hp <= 0 ? ` — ${name} destroyed!` : ''}`);
-    this.units = this.units.filter((u) => u.hp > 0);
-    this.checkVictory();
+    if (pr.steps > 0) {
+      const name = UNIT_SPECS[pr.unit.type].name;
+      pr.unit.hp -= pr.steps;
+      this.addLog(pr.unit.side, `${name} cannot retreat and loses ${pr.steps} strength${pr.unit.hp <= 0 ? ` — ${name} destroyed!` : ''}`);
+      this.units = this.units.filter((u) => u.hp > 0);
+      this.checkVictory();
+    }
+    this.offerAdvance();
   }
 
   // ---------------------------------------------------------------- actions
@@ -519,6 +589,7 @@ export class Game {
       }
     }
     u.pos = dest;
+    u.halted = this.terrainStops(dest);
     u.mp = this.stopsMovement(u.side, dest) ? 0 : u.mp - r.cost;
     u.spaces += r.cost;
     const o = this.map.obstacles.get(key(dest));
@@ -530,7 +601,7 @@ export class Game {
   }
 
   endTurn(): void {
-    if (this.winner || this.pendingRetreat) return;
+    if (this.winner || this.pendingRetreat || this.pendingAdvance) return;
     if (this.current !== this.firstSide && this.turn >= MAX_TURNS) {
       this.decideByScore();
       return;
@@ -543,17 +614,20 @@ export class Game {
   // ---------------------------------------------------------------- internals
 
   private spawn(side: Side, type: UnitType, pos: Hex): void {
-    this.units.push({ id: this.nextId++, type, side, pos, hp: UNIT_SPECS[type].maxHp, mp: 0, spaces: 0, attacked: false, done: false });
+    this.units.push({ id: this.nextId++, type, side, pos, hp: UNIT_SPECS[type].maxHp, mp: 0, spaces: 0, attacked: false, halted: false, overran: false, done: false });
   }
 
   private startTurn(): void {
     this.phase = 'orders';
     this.ordered.clear();
     this.lastMover = null;
+    this.overrunUnit = null;
     for (const u of this.unitsOf(this.current)) {
       u.mp = UNIT_SPECS[u.type].move;
       u.spaces = 0;
       u.attacked = false;
+      u.halted = false;
+      u.overran = false;
       u.done = false;
     }
   }

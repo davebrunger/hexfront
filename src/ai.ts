@@ -53,18 +53,16 @@ export function planAction(game: Game): AIAction | null {
     return { kind: 'move', unit, dest: eq(best.hex, unit.pos) ? null : best.hex };
   }
 
+  // Armour that took ground makes its overrun before anyone else attacks.
+  const overrun = game.overrunUnit;
+  if (overrun && overrun.side === side) {
+    const target = bestTarget(game, overrun);
+    if (target) return { kind: 'attack', unit: overrun, target };
+  }
   for (const unit of game.unitsOf(side)) {
     if (!game.isOrdered(unit) || unit.done) continue;
     unit.done = true;
-    let target: Unit | null = null;
-    let targetVal = 0;
-    for (const t of game.attackTargets(unit)) {
-      const v = targetValue(game, unit, t, unit.pos);
-      if (v > targetVal) {
-        targetVal = v;
-        target = t;
-      }
-    }
+    const target = bestTarget(game, unit);
     if (target) return { kind: 'attack', unit, target };
     // With nothing to shoot, infantry on wire clears it instead.
     if (game.canClearObstacle(unit)) return { kind: 'clear', unit };
@@ -84,19 +82,31 @@ export function applyAction(game: Game, action: AIAction): void {
       return game.endMovement();
     case 'attack':
       game.attack(action.unit, action.target);
-      resolveRetreat(game);
+      resolvePending(game);
       return;
     case 'clear':
       return game.clearObstacle(action.unit);
   }
 }
 
-/** Settle any pending retreat with the AI deciding for the retreating unit (used when both sides are AI). */
-export function resolveRetreat(game: Game): void {
-  while (game.pendingRetreat) {
-    if (game.pendingRetreat.ignorable > 0) game.ignoreFlags(flagsToIgnore(game));
+/** Settle any pending retreat and take-ground with the AI deciding for both units (used when both sides are AI). */
+export function resolvePending(game: Game): void {
+  while (game.pendingRetreat || game.pendingAdvance) {
+    if (game.pendingAdvance) game.takeGround(shouldTakeGround(game));
+    else if (game.pendingRetreat!.ignorable > 0) game.ignoreFlags(flagsToIgnore(game));
     else game.retreatTo(retreatHex(game));
   }
+}
+
+/**
+ * Whether the AI's unit takes ground: armour always does when it would earn an overrun; otherwise
+ * only if the vacated hex scores at least as well as where it stands.
+ */
+export function shouldTakeGround(game: Game): boolean {
+  const { unit, to } = game.pendingAdvance!;
+  const overrun = unit.type === 'armour' && !unit.overran && !TERRAIN[game.map.terrain(to)!].noAttackAfterEntering;
+  if (overrun) return true;
+  return positionScore(game, unit, to, unit.spaces) >= positionScore(game, unit, unit.pos, unit.spaces);
 }
 
 /** Flags the AI ignores for its retreating unit: all it can, keeping the protection it has there. */
@@ -113,6 +123,20 @@ export function retreatHex(game: Game): Hex {
     return -danger(game, unit, h, enemies) + (cover.infantry + cover.armour) / 4;
   };
   return game.retreatOptions().reduce((a, b) => (safety(b) > safety(a) ? b : a));
+}
+
+/** The enemy `unit` can attack now that is worth most, if any. */
+function bestTarget(game: Game, unit: Unit): Unit | null {
+  let target: Unit | null = null;
+  let targetVal = 0;
+  for (const t of game.attackTargets(unit)) {
+    const v = targetValue(game, unit, t, unit.pos);
+    if (v > targetVal) {
+      targetVal = v;
+      target = t;
+    }
+  }
+  return target;
 }
 
 /** Expected damage plus a bonus for the chance of destroying the target. */
@@ -139,50 +163,50 @@ function chooseOrders(game: Game): Unit[] {
  * closing with the enemy, cover and danger.
  */
 function bestPosition(game: Game, unit: Unit, planning: boolean): { score: number; hex: Hex } {
-  const side = game.current;
+  const reach = game.reachable(unit, planning);
+  let best = { score: -Infinity, hex: unit.pos };
+  for (const r of reach.values()) {
+    if (!eq(r.hex, unit.pos) && game.unitAt(r.hex)) continue;
+    const score = positionScore(game, unit, r.hex, game.spacesMoved(unit) + r.cost);
+    if (score > best.score) best = { score, hex: r.hex };
+  }
+  return best;
+}
+
+/** How good `hex` is for `unit` having moved `spaces` this turn (see bestPosition). */
+function positionScore(game: Game, unit: Unit, hex: Hex, spaces: number): number {
+  const side = unit.side;
   const foe = other(side);
   const enemies = game.unitsOf(foe);
   // Aggression grows through the game, and faster when behind on score.
   const behind = Math.max(0, game.score(foe) - game.score(side));
   const caution = Math.max(MIN_CAUTION, 1 - CAUTION_PER_TURN * game.turn - CAUTION_PER_POINT_BEHIND * behind);
+  let score = 0;
 
-  const reach = game.reachable(unit, planning);
-  const candidates = [...reach.values()]
-    .map((r) => r.hex)
-    .filter((h) => eq(h, unit.pos) || !game.unitAt(h));
+  // Combat value of the best target available from this hex.
+  let attack = 0;
+  for (const t of game.targetsFrom(unit, hex, spaces)) attack = Math.max(attack, targetValue(game, unit, t, hex));
+  score += attack * ATTACK_WEIGHT;
 
-  let best = { score: -Infinity, hex: unit.pos };
-  for (const hex of candidates) {
-    const spaces = game.spacesMoved(unit) + reach.get(key(hex))!.cost;
-    let score = 0;
-
-    // Combat value of the best target available from this hex.
-    let attack = 0;
-    for (const t of game.targetsFrom(unit, hex, spaces)) attack = Math.max(attack, targetValue(game, unit, t, hex));
-    score += attack * ATTACK_WEIGHT;
-
-    // Closing with / keeping away from the enemy. Artillery can't move and fire, so it settles
-    // where it will have 2-3 dice next turn while staying out of infantry reach.
-    const dEnemy = enemies.length ? Math.min(...enemies.map((e) => distance(hex, e.pos))) : 0;
-    if (unit.type === 'artillery') {
-      score -= Math.abs(dEnemy - 4) * 0.6;
-    } else {
-      score -= dEnemy * (unit.type === 'armour' ? 0.8 : 0.7) * CLOSE_WEIGHT;
-    }
-
-    // Cover from terrain or an obstacle (they don't add together), averaged over the attackers it affects.
-    const obstacle = game.map.obstacles.get(key(hex));
-    const terrainCover = TERRAIN[game.map.terrain(hex)!].protection;
-    const obstacleCover = obstacle ? OBSTACLES[obstacle.kind].protection : terrainCover;
-    const cover = Math.max(terrainCover.infantry + terrainCover.armour, obstacleCover.infantry + obstacleCover.armour) / 2;
-    score += cover * TERRAIN_WEIGHT * caution;
-
-    // Danger: expected damage from enemy attacks next turn (forest, hills and villages reduce it).
-    const fragile = 1 + (1 - hpFrac(unit)) * 1.25 + (unit.type === 'artillery' ? 0.5 : 0);
-    score -= danger(game, unit, hex, enemies) * DANGER_WEIGHT * fragile * caution;
-
-    score += game.rand() * 0.4;
-    if (score > best.score) best = { score, hex };
+  // Closing with / keeping away from the enemy. Artillery can't move and fire, so it settles
+  // where it will have 2-3 dice next turn while staying out of infantry reach.
+  const dEnemy = enemies.length ? Math.min(...enemies.map((e) => distance(hex, e.pos))) : 0;
+  if (unit.type === 'artillery') {
+    score -= Math.abs(dEnemy - 4) * 0.6;
+  } else {
+    score -= dEnemy * (unit.type === 'armour' ? 0.8 : 0.7) * CLOSE_WEIGHT;
   }
-  return best;
+
+  // Cover from terrain or an obstacle (they don't add together), averaged over the attackers it affects.
+  const obstacle = game.map.obstacles.get(key(hex));
+  const terrainCover = TERRAIN[game.map.terrain(hex)!].protection;
+  const obstacleCover = obstacle ? OBSTACLES[obstacle.kind].protection : terrainCover;
+  const cover = Math.max(terrainCover.infantry + terrainCover.armour, obstacleCover.infantry + obstacleCover.armour) / 2;
+  score += cover * TERRAIN_WEIGHT * caution;
+
+  // Danger: expected damage from enemy attacks next turn (forest, hills and villages reduce it).
+  const fragile = 1 + (1 - hpFrac(unit)) * 1.25 + (unit.type === 'artillery' ? 0.5 : 0);
+  score -= danger(game, unit, hex, enemies) * DANGER_WEIGHT * fragile * caution;
+
+  return score + game.rand() * 0.4;
 }
